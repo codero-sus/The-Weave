@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "the-weave"
+version = "0.1.0"
+description = "Weave — a single-file, full-stack language. Python logic, declarative UI."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "The Weave Project" }]
+keywords = ["weave", "language", "compiler", "transpiler", "full-stack", "reactive"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Development Status :: 3 - Alpha",
+]
+
+[project.scripts]
+weave = "the_weave.cli:main"
+
+[tool.setuptools]
+packages = ["the_weave"]
+
+[tool.setuptools.package-data]
+the_weave = ["static/*.css", "static/*.js"]

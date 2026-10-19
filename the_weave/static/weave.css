@@ -1,0 +1,690 @@
+/* ==========================================================================
+   Weave — design system
+   A small, typographic, neutral UI kit. Everything is driven by CSS custom
+   properties so a `theme:` block in a .weave file can restyle the whole app.
+   ========================================================================== */
+
+:root {
+  --weave-primary: #5b5ef0;
+  --weave-primary-text: #ffffff;
+  --weave-primary-soft: color-mix(in srgb, var(--weave-primary) 12%, transparent);
+  --weave-primary-strong: color-mix(in srgb, var(--weave-primary) 82%, #000 18%);
+  --weave-accent: #8b5cf6;
+  --weave-secondary: #7c3aed;
+  --weave-bg: #f6f6fb;
+  --weave-surface: #ffffff;
+  --weave-text: #171827;
+  --weave-muted: #6a6f80;
+  --weave-border: #e5e6ef;
+  --weave-subtle: #f1f2f8;
+  --weave-success: #0f9d76;
+  --weave-success-soft: color-mix(in srgb, var(--weave-success) 14%, transparent);
+  --weave-danger: #e5484d;
+  --weave-danger-soft: color-mix(in srgb, var(--weave-danger) 14%, transparent);
+  --weave-warning: #c47f17;
+  --weave-warning-soft: color-mix(in srgb, var(--weave-warning) 16%, transparent);
+  --weave-info: #2b7fff;
+  --weave-info-soft: color-mix(in srgb, var(--weave-info) 14%, transparent);
+  --weave-radius: 14px;
+
+  --weave-font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Inter, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --weave-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --weave-shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --weave-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05), 0 2px 8px -2px rgba(15, 23, 42, 0.08);
+  --weave-shadow-md: 0 4px 16px -4px rgba(15, 23, 42, 0.12), 0 2px 4px -2px rgba(15, 23, 42, 0.06);
+  --weave-shadow-lg: 0 18px 48px -12px rgba(15, 23, 42, 0.22);
+
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  --weave-primary: #7d80ff;
+  --weave-primary-text: #0b0b16;
+  --weave-bg: #0e0f17;
+  --weave-surface: #171926;
+  --weave-text: #eceef7;
+  --weave-muted: #9aa0b4;
+  --weave-border: #282b3b;
+  --weave-subtle: #1e2030;
+  --weave-success: #35d6a4;
+  --weave-danger: #ff6b70;
+  --weave-warning: #f4b860;
+  --weave-info: #6aa8ff;
+  --weave-primary-soft: color-mix(in srgb, var(--weave-primary) 20%, transparent);
+  --weave-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --weave-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 14px -4px rgba(0, 0, 0, 0.45);
+  --weave-shadow-md: 0 8px 24px -8px rgba(0, 0, 0, 0.55);
+  --weave-shadow-lg: 0 24px 60px -16px rgba(0, 0, 0, 0.65);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) {
+    --weave-primary: #7d80ff;
+    --weave-primary-text: #0b0b16;
+    --weave-bg: #0e0f17;
+    --weave-surface: #171926;
+    --weave-text: #eceef7;
+    --weave-muted: #9aa0b4;
+    --weave-border: #282b3b;
+    --weave-subtle: #1e2030;
+    --weave-success: #35d6a4;
+    --weave-danger: #ff6b70;
+    --weave-warning: #f4b860;
+    --weave-info: #6aa8ff;
+    --weave-primary-soft: color-mix(in srgb, var(--weave-primary) 20%, transparent);
+    --weave-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --weave-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 14px -4px rgba(0, 0, 0, 0.45);
+    --weave-shadow-md: 0 8px 24px -8px rgba(0, 0, 0, 0.55);
+    color-scheme: dark;
+  }
+}
+
+/* --------------------------------------------------------------- reset -- */
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  font-family: var(--weave-font);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--weave-text);
+  background: var(--weave-bg);
+  background-image:
+    radial-gradient(900px 420px at 15% -10%, var(--weave-primary-soft), transparent 70%),
+    radial-gradient(720px 380px at 100% 0%, color-mix(in srgb, var(--weave-accent) 9%, transparent), transparent 70%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, p, pre, figure { margin: 0; }
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: var(--weave-primary); }
+img { max-width: 100%; }
+
+#weave-root {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 32px 24px 96px;
+}
+
+/* ------------------------------------------------------------- layout --- */
+.weave-stack > * { min-width: 0; }
+.weave-row > * { min-width: 0; }
+.weave-grid > * { min-width: 0; }
+.weave-spacer { flex: 1 1 auto; }
+
+.weave-card {
+  transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.3, 1),
+    box-shadow 0.18s cubic-bezier(0.2, 0.7, 0.3, 1),
+    border-color 0.18s ease;
+  border: 1px solid transparent;
+}
+.weave-card:hover { border-color: var(--weave-border); }
+.weave-card.weave-hover { cursor: pointer; }
+.weave-card.weave-hover:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--weave-shadow-md);
+}
+.weave-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--weave-muted);
+  margin-bottom: 10px;
+}
+
+.weave-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--weave-muted);
+}
+
+.weave-hero-title {
+  font-size: clamp(26px, 4vw, 38px);
+  font-weight: 780;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+.weave-hero-subtitle {
+  font-size: 16px;
+  color: var(--weave-muted);
+  max-width: 64ch;
+  line-height: 1.55;
+}
+
+/* --------------------------------------------------------------- type --- */
+.weave-text { line-height: 1.6; }
+.weave-title { line-height: 1.15; }
+.weave-label { letter-spacing: 0.02em; }
+.weave-code {
+  tab-size: 2;
+  line-height: 1.55;
+  border: 1px solid var(--weave-border);
+}
+.weave-mono { font-family: var(--weave-mono); }
+
+/* -------------------------------------------------------------- links --- */
+.weave-link { transition: color 0.15s ease, opacity 0.15s ease; }
+.weave-link:hover { opacity: 0.78; }
+
+/* ------------------------------------------------------------ buttons --- */
+.weave-btn {
+  --btn-bg: transparent;
+  --btn-fg: var(--weave-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 16px;
+  min-height: 38px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: transform 0.1s ease, filter 0.15s ease, background 0.15s ease,
+    box-shadow 0.15s ease, border-color 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.weave-btn:active { transform: translateY(1px) scale(0.995); }
+.weave-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--weave-primary-soft), 0 0 0 1px var(--weave-primary);
+}
+.weave-btn-icon { display: inline-flex; font-size: 1.05em; line-height: 1; }
+.weave-btn-primary {
+  --btn-bg: linear-gradient(180deg, color-mix(in srgb, var(--weave-primary) 90%, #fff 10%), var(--weave-primary));
+  --btn-fg: var(--weave-primary-text);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+.weave-btn-primary:hover { filter: brightness(1.06); }
+.weave-btn-secondary {
+  --btn-bg: var(--weave-surface);
+  --btn-fg: var(--weave-text);
+  border-color: var(--weave-border);
+  box-shadow: var(--weave-shadow-xs);
+}
+.weave-btn-secondary:hover { background: var(--weave-subtle); }
+.weave-btn-ghost { --btn-bg: transparent; --btn-fg: var(--weave-muted); }
+.weave-btn-ghost:hover { background: var(--weave-subtle); color: var(--weave-text); }
+.weave-btn-outline {
+  --btn-bg: transparent;
+  --btn-fg: var(--weave-primary);
+  border-color: color-mix(in srgb, var(--weave-primary) 45%, var(--weave-border));
+}
+.weave-btn-outline:hover { background: var(--weave-primary-soft); }
+.weave-btn-subtle { --btn-bg: var(--weave-subtle); --btn-fg: var(--weave-text); }
+.weave-btn-subtle:hover { background: var(--weave-border); }
+.weave-btn-danger {
+  --btn-bg: var(--weave-danger);
+  --btn-fg: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.16);
+}
+.weave-btn-danger:hover { filter: brightness(1.05); }
+.weave-btn-success { --btn-bg: var(--weave-success); --btn-fg: #fff; }
+.weave-btn-success:hover { filter: brightness(1.05); }
+.weave-btn-link { --btn-bg: transparent; --btn-fg: var(--weave-primary); text-decoration: none; }
+.weave-btn-anchor { text-decoration: none; }
+.weave-btn-link:hover { background: var(--weave-primary-soft); }
+
+.weave-btn-sm { padding: 6px 11px; min-height: 30px; font-size: 13px; border-radius: 8px; }
+.weave-btn-lg { padding: 12px 22px; min-height: 46px; font-size: 15px; border-radius: 12px; }
+.weave-btn-square { padding: 0; width: 38px; min-width: 38px; height: 38px; }
+.weave-btn-square.weave-btn-sm { width: 30px; min-width: 30px; height: 30px; }
+.weave-btn-square.weave-btn-lg { width: 46px; min-width: 46px; height: 46px; }
+.weave-btn-disabled, .weave-btn[disabled], .weave-btn[aria-disabled="true"] {
+  opacity: 0.45;
+  pointer-events: none;
+  filter: grayscale(0.2);
+}
+
+/* ------------------------------------------------------------- inputs --- */
+.weave-field { position: relative; }
+.weave-field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--weave-muted);
+  letter-spacing: 0.005em;
+}
+.weave-field-row { position: relative; display: flex; align-items: center; width: 100%; }
+.weave-field-icon {
+  position: absolute;
+  left: 12px;
+  font-size: 15px;
+  opacity: 0.7;
+  pointer-events: none;
+}
+.weave-field-row .weave-field-icon + input { padding-left: 36px; }
+.weave-field-help { font-size: 12px; color: var(--weave-muted); }
+.weave-field-error { font-size: 12px; color: var(--weave-danger); font-weight: 500; }
+
+.weave-field input,
+.weave-field textarea,
+.weave-field select,
+.weave-select-input {
+  width: 100%;
+  padding: 10px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--weave-border);
+  background: var(--weave-surface);
+  color: var(--weave-text);
+  font-size: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.weave-field input::placeholder,
+.weave-field textarea::placeholder { color: color-mix(in srgb, var(--weave-muted) 78%, transparent); }
+.weave-field input:hover,
+.weave-field textarea:hover,
+.weave-field select:hover { border-color: color-mix(in srgb, var(--weave-border) 55%, var(--weave-muted)); }
+.weave-field input:focus,
+.weave-field textarea:focus,
+.weave-field select:focus,
+.weave-select-input:focus {
+  outline: none;
+  border-color: var(--weave-primary);
+  box-shadow: 0 0 0 3px var(--weave-primary-soft);
+}
+.weave-field input:disabled,
+.weave-field textarea:disabled,
+.weave-field select:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.weave-checkbox input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  accent-color: var(--weave-primary);
+  cursor: pointer;
+}
+.weave-checkbox span { font-size: 14px; font-weight: 500; }
+
+.weave-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.weave-toggle-track {
+  position: relative;
+  width: 40px;
+  height: 23px;
+  border-radius: 999px;
+  background: var(--weave-border);
+  transition: background 0.18s ease;
+  flex: none;
+}
+.weave-toggle-track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.3);
+  transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.weave-toggle input:checked + .weave-toggle-track { background: var(--weave-primary); }
+.weave-toggle input:checked + .weave-toggle-track::after { transform: translateX(17px); }
+.weave-toggle input:focus-visible + .weave-toggle-track {
+  box-shadow: 0 0 0 3px var(--weave-primary-soft);
+}
+.weave-toggle-label { font-size: 14px; font-weight: 500; }
+
+.weave-slider-row { display: flex; align-items: center; gap: 12px; }
+.weave-slider-input {
+  width: 100%;
+  accent-color: var(--weave-primary);
+  cursor: pointer;
+}
+.weave-slider-value {
+  min-width: 2.5ch;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--weave-muted);
+  text-align: right;
+}
+
+/* --------------------------------------------------------------- tabs --- */
+.weave-tabs { border: 1px solid var(--weave-border); }
+.weave-tab {
+  border: none;
+  background: transparent;
+  color: var(--weave-muted);
+  padding: 7px 14px;
+  border-radius: 9px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+.weave-tab:hover { color: var(--weave-text); }
+.weave-tab-active {
+  background: var(--weave-surface);
+  color: var(--weave-text);
+  box-shadow: var(--weave-shadow-xs);
+}
+.weave-tab-count {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--weave-subtle);
+  color: var(--weave-muted);
+}
+
+/* ------------------------------------------------------------- badges --- */
+.weave-badge { white-space: nowrap; }
+
+/* ------------------------------------------------------------ metrics --- */
+.weave-metric { transition: transform 0.18s ease, box-shadow 0.18s ease; }
+.weave-metric:hover { transform: translateY(-1px); box-shadow: var(--weave-shadow-sm); }
+.weave-metric-value {
+  font-size: 28px;
+  font-weight: 760;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.weave-metric-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--weave-muted);
+}
+.weave-metric-icon { font-size: 18px; margin-bottom: 2px; }
+
+/* ----------------------------------------------------------- progress --- */
+.weave-progress { width: 100%; }
+.weave-progress-label { font-size: 12px; font-weight: 600; color: var(--weave-muted); }
+
+/* -------------------------------------------------------------- table --- */
+.weave-table {
+  width: 100%;
+  font-size: 14px;
+  border: 1px solid var(--weave-border);
+  overflow: hidden;
+}
+.weave-table th {
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--weave-muted);
+  padding: 10px 14px;
+  background: var(--weave-subtle);
+}
+.weave-table td {
+  padding: 11px 14px;
+  border-top: 1px solid var(--weave-border);
+  vertical-align: middle;
+}
+.weave-table-striped tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--weave-subtle) 55%, transparent); }
+.weave-table-hover tbody tr:hover td { background: var(--weave-subtle); }
+.weave-table-compact th, .weave-table-compact td { padding: 6px 10px; }
+
+/* ------------------------------------------------------------ images ---- */
+.weave-image { max-width: 100%; height: auto; }
+.weave-zoom { transition: transform 0.25s ease; cursor: zoom-in; }
+.weave-zoom:hover { transform: scale(1.015); }
+.weave-avatar { flex: none; background: var(--weave-subtle); }
+
+/* ------------------------------------------------------ scroll areas --- */
+.weave-scroll { scrollbar-width: thin; scrollbar-color: var(--weave-border) transparent; }
+.weave-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.weave-scroll::-webkit-scrollbar-thumb { background: var(--weave-border); border-radius: 999px; }
+
+/* ------------------------------------------------------------ toasts --- */
+.weave-toasts {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 90;
+  max-width: min(380px, calc(100vw - 40px));
+}
+.weave-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--weave-surface);
+  color: var(--weave-text);
+  border: 1px solid var(--weave-border);
+  box-shadow: var(--weave-shadow-lg);
+  font-size: 13.5px;
+  font-weight: 500;
+  animation: weave-toast-in 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.weave-toast::before {
+  content: "";
+  width: 4px;
+  align-self: stretch;
+  border-radius: 4px;
+  background: var(--weave-muted);
+  flex: none;
+}
+.weave-toast-success::before { background: var(--weave-success); }
+.weave-toast-error::before { background: var(--weave-danger); }
+.weave-toast-info::before { background: var(--weave-info); }
+.weave-toast-warning::before { background: var(--weave-warning); }
+.weave-toast-out { animation: weave-toast-out 0.22s ease forwards; }
+
+@keyframes weave-toast-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes weave-toast-out {
+  to { opacity: 0; transform: translateY(6px) scale(0.98); }
+}
+
+/* --------------------------------------------------- busy indicator ---- */
+.weave-progress-line {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  z-index: 120;
+  opacity: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--weave-primary), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  transition: opacity 0.2s ease;
+}
+body[data-busy="1"] .weave-progress-line {
+  opacity: 1;
+  animation: weave-progress 0.9s linear infinite;
+}
+@keyframes weave-progress {
+  from { background-position: -40% 0; }
+  to { background-position: 140% 0; }
+}
+
+/* ---------------------------------------------------------- theme btn --- */
+.weave-theme-toggle {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--weave-border);
+  background: color-mix(in srgb, var(--weave-surface) 82%, transparent);
+  color: var(--weave-muted);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  opacity: 0.75;
+  transition: opacity 0.15s ease, transform 0.2s ease, color 0.15s ease;
+}
+.weave-theme-toggle:hover { opacity: 1; color: var(--weave-text); transform: rotate(-12deg); }
+
+/* --------------------------------------------------------- error UI ---- */
+.weave-error-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--weave-bg) 55%, transparent);
+  backdrop-filter: blur(6px);
+}
+.weave-error-overlay[hidden] { display: none; }
+.weave-error-card {
+  width: min(680px, 100%);
+  max-height: 85vh;
+  overflow: auto;
+  background: var(--weave-surface);
+  border: 1px solid var(--weave-border);
+  border-left: 4px solid var(--weave-danger);
+  border-radius: 16px;
+  padding: 24px 26px;
+  box-shadow: var(--weave-shadow-lg);
+  animation: weave-toast-in 0.2s ease;
+}
+.weave-error-kicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--weave-danger);
+  margin-bottom: 10px;
+}
+.weave-error-kicker code {
+  font-family: var(--weave-mono);
+  font-size: 11px;
+  background: var(--weave-danger-soft);
+  padding: 2px 6px;
+  border-radius: 5px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.weave-error-card h1, .weave-error-card h2 {
+  font-size: 21px;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+.weave-error-loc {
+  font-family: var(--weave-mono);
+  font-size: 12px;
+  color: var(--weave-muted);
+  margin-bottom: 14px;
+}
+.weave-error-snippet {
+  background: var(--weave-subtle);
+  border: 1px solid var(--weave-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-family: var(--weave-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  margin-bottom: 12px;
+}
+.weave-error-hint {
+  font-size: 13.5px;
+  color: var(--weave-muted);
+  background: var(--weave-info-soft);
+  border-left: 3px solid var(--weave-info);
+  padding: 9px 12px;
+  border-radius: 0 8px 8px 0;
+  margin-bottom: 16px;
+}
+.weave-error-card .weave-btn { margin-top: 4px; }
+.weave-error-help { font-size: 13px; color: var(--weave-muted); margin-top: 14px; }
+
+.weave-error-page {
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+.weave-error-page .weave-error-card { border-left-color: var(--weave-danger); }
+
+/* --------------------------------------------------- reload banner ---- */
+.weave-reload-error {
+  position: sticky;
+  top: 0;
+  z-index: 110;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  padding: 10px 18px;
+  background: var(--weave-warning-soft);
+  border-bottom: 1px solid color-mix(in srgb, var(--weave-warning) 35%, transparent);
+  color: var(--weave-text);
+  font-size: 13px;
+}
+.weave-reload-error strong { color: var(--weave-warning); }
+.weave-reload-error span { font-family: var(--weave-mono); font-size: 12px; color: var(--weave-muted); }
+
+/* ------------------------------------------------------- animations ---- */
+.weave-anim-fade { animation: weave-fade 0.3s ease both; }
+.weave-anim-slide { animation: weave-slide 0.32s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+.weave-anim-pop { animation: weave-pop 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+@keyframes weave-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes weave-slide { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes weave-pop { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+
+.weave-root-swap { animation: weave-fade 0.14s ease; }
+
+/* ------------------------------------------------------------ mobile --- */
+@media (max-width: 640px) {
+  #weave-root { padding: 20px 14px 80px; }
+  .weave-hero-title { font-size: 26px; }
+  .weave-metric-value { font-size: 24px; }
+  .weave-theme-toggle { top: 10px; right: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ------------------------------------------------------------- print --- */
+@media print {
+  body { background: #fff; }
+  #weave-root { max-width: none; padding: 0; }
+  .weave-theme-toggle, .weave-toasts, .weave-progress-line, .weave-error-overlay { display: none !important; }
+}

@@ -1,0 +1,202 @@
+app Weaveboard(title: "Weaveboard — a full-stack app in one file"):
+
+    theme:
+        primary: "#5b5ef0"
+        accent: "#8b5cf6"
+        radius: 16
+        mode: auto
+
+    styles:
+        dashed:
+            background: "transparent"
+            border: "1px dashed var(--weave-border)"
+        inset_panel:
+            background: "var(--weave-subtle)"
+            radius: 12
+            padding: 14
+
+    state:
+        tasks = [
+            {"title": "Design the language", "done": true, "tag": "spec"},
+            {"title": "Write the compiler", "done": true, "tag": "code"},
+            {"title": "Ship the prototype", "done": false, "tag": "ship"},
+            {"title": "Write the docs", "done": false, "tag": "docs"},
+        ]
+        draft = ""
+        filter = "All"
+        sort_by = "Newest"
+        show_completed = true
+        priority = 3
+        team = ["Ada", "Grace", "Linus"]
+
+    function completed(items):
+        return len([t for t in items if t["done"]])
+
+    function percent(items):
+        if not items:
+            return 0
+        return round(completed(items) / len(items) * 100)
+
+    function visible(selection, items, sort_key):
+        result = items
+        if selection == "Open":
+            result = [t for t in result if not t["done"]]
+        if selection == "Done":
+            result = [t for t in result if t["done"]]
+        if sort_key == "A-Z":
+            result = sorted(result, key=lambda t: t["title"])
+        if sort_key == "Oldest":
+            result = list(reversed(result))
+        return result
+
+    view:
+        stack(padding: 30, gap: 20):
+
+            row(justify: between, align: center):
+                stack(gap: 2):
+                    title("Weaveboard")
+                    text("One .weave file. State, logic and UI — no boilerplate.", muted: true)
+                row(gap: 8, align: center):
+                    badge(f"{len(tasks)} tasks", variant: primary)
+                    button("About Weave", variant: secondary, size: sm, href: "/about")
+
+            grid(columns: 3, gap: 12):
+                metric(completed(tasks), "Completed", icon: "✓")
+                metric(len(tasks) - completed(tasks), "Open", icon: "◌")
+                metric(f"{percent(tasks)}%", "Progress", icon: "◔")
+
+            card(padding: 18):
+                stack(gap: 12):
+                    row(justify: between, align: center):
+                        text("Progress", font: 13, bold: true, uppercase: true, muted: true)
+                        text(f"{percent(tasks)}%", font: 13, bold: true, muted: true)
+                    progress(completed(tasks), len(tasks), height: 10)
+
+            row(gap: 12, wrap: true, justify: between):
+                tabs(bind: filter):
+                    tab("All")
+                    tab("Open")
+                    tab("Done")
+                row(gap: 8, align: center):
+                    select(bind: sort_by, options: ["Newest", "Oldest", "A-Z"], width: 130)
+                    toggle(bind: show_completed, label: "Show done")
+
+            input(
+                bind: draft,
+                placeholder: "What needs doing? Press Enter to add…",
+                on_enter: {
+                    if draft.strip() != "":
+                        tasks.insert(0, {"title": draft.strip(), "done": false, "tag": "new"})
+                        draft = ""
+                        toast("Task added", "success")
+                }
+            )
+
+            if not tasks:
+                card(style: dashed, padding: 26):
+                    text("Nothing left on the board.", muted: true, align: center)
+
+            for task in visible(filter, tasks, sort_by):
+                if show_completed or not task["done"]:
+                    card(padding: 13, shadow: xs, animate: fade):
+                        row(justify: between, align: center, gap: 12):
+                            row(gap: 12, align: center):
+                                button(
+                                    "✓" if task["done"] else "○",
+                                    variant: ghost if task["done"] else outline,
+                                    size: sm,
+                                    click: {
+                                        task["done"] = not task["done"]
+                                    }
+                                )
+                                stack(gap: 1):
+                                    text(task["title"], bold: True, muted: task["done"])
+                                    text(f"#{task['tag']}", font: 12, muted: true, mono: true)
+                            row(gap: 6, align: center):
+                                if task["done"]:
+                                    badge("done", variant: success)
+                                else:
+                                    badge("open", variant: muted)
+                                button("Remove", variant: ghost, size: sm, click: tasks.remove(task))
+
+            divider()
+
+            stack(gap: 10):
+                text("Team", font: 13, bold: true, uppercase: true, muted: true)
+                grid(columns: 3, gap: 10):
+                    for person in team:
+                        card(padding: 12, shadow: xs):
+                            row(gap: 10, align: center):
+                                icon("✦", size: 16, color: "#ffffff", background: primary, radius: full, padding: 8)
+                                text(person, bold: true)
+
+            card(padding: 18):
+                stack(gap: 10):
+                    row(justify: between, align: center):
+                        text("Priority", bold: true)
+                        badge(priority, variant: warning)
+                    slider(bind: priority, min: 1, max: 5, step: 1)
+                    row(gap: 8):
+                        text("Low", font: 12, muted: true)
+                        spacer()
+                        text("High", font: 12, muted: true)
+
+            row(justify: between, align: center):
+                text("Built with Weave", font: 12, muted: true)
+                row(gap: 10):
+                    link("Components →", href: "/components")
+                    link("Source →", href: "/source")
+
+    routes:
+        "/about":
+            stack(padding: 30, gap: 18):
+                row(justify: between, align: center):
+                    title("About")
+                    button("← Back to board", variant: secondary, size: sm, href: "/")
+                card(padding: 22):
+                    stack(gap: 12):
+                        text("Weave is a single-file, full-stack language.", font: 18, bold: true)
+                        text("Python-flavoured logic and a declarative view language live side by side. The engine compiles handlers to real Python, keeps state on the server, and streams fresh HTML back to the browser over a tiny reactive runtime.", muted: true)
+                        divider()
+                        text("This app is one .weave file — no HTML, no CSS file, no JavaScript.", muted: true)
+                card(padding: 18):
+                    text("The engine", font: 13, bold: true, uppercase: true, muted: true)
+                    stack(gap: 8):
+                        text("tokenizer → indentation-aware lexer with bracket tracking")
+                        text("parser → recursive descent, blocks for state / view / routes / functions")
+                        text("analyzer → component + name resolution with suggestions")
+                        text("codegen → CPython AST rewriting, executed in a safe namespace")
+                        text("renderer → server-side HTML with inline design tokens")
+                        text("runtime → session-scoped reactivity, no build step")
+
+        "/components":
+            stack(padding: 30, gap: 18):
+                row(justify: between, align: center):
+                    title("Components")
+                    button("← Back to board", variant: secondary, size: sm, href: "/")
+                text("The whole vocabulary is declarative — every primitive is a function-like call.", muted: true)
+                table(
+                    [
+                        {"name": "stack", "kind": "layout", "note": "vertical flex container"},
+                        {"name": "row", "kind": "layout", "note": "horizontal flex container"},
+                        {"name": "grid", "kind": "layout", "note": "responsive CSS grid"},
+                        {"name": "card", "kind": "layout", "note": "surface with padding + shadow"},
+                        {"name": "text", "kind": "content", "note": "paragraph of text"},
+                        {"name": "metric", "kind": "content", "note": "big number with a caption"},
+                        {"name": "input", "kind": "form", "note": "text field, usually with bind:"},
+                        {"name": "button", "kind": "form", "note": "click handler + variants"},
+                        {"name": "tabs", "kind": "form", "note": "segmented control bound to state"},
+                        {"name": "table", "kind": "data", "note": "rows + columns, zero markup"}
+                    ],
+                    columns: ["name", "kind", "note"],
+                    striped: true,
+                    hover: true
+                )
+
+        "/source":
+            stack(padding: 30, gap: 18):
+                row(justify: between, align: center):
+                    title("Source")
+                    button("← Back to board", variant: secondary, size: sm, href: "/")
+                text("This is the entire app — nothing hidden.", muted: true)
+                code("app Weaveboard(title: \"Weaveboard\"):\n    state:\n        tasks = [...]\n        draft = \"\"\n\n    view:\n        input(bind: draft, on_enter: {\n            tasks.insert(0, {\"title\": draft, \"done\": false})\n            draft = \"\"\n        })\n\n        for task in tasks:\n            card(shadow: xs):\n                text(task[\"title\"])", wrap: true, font: 12)

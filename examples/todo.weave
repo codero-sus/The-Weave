@@ -1,0 +1,19 @@
+app TodoApp(title: "Weave — Todo"):
+
+    state:
+        tasks = ["Learn Weave", "Build something cool"]
+        new_task = ""
+
+    view:
+        stack(padding: 24, align: center):
+            text("My Tasks", font: 28, bold: true)
+
+            input(bind: new_task, placeholder: "Add a new task...", on_enter: {
+                tasks.append(new_task)
+                new_task = ""
+            })
+
+            for task in tasks:
+                card(shadow: sm):
+                    text(task)
+                    button("Done", click: tasks.remove(task))

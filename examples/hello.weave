@@ -1,0 +1,18 @@
+app Hello(title: "Hello, Weave"):
+
+    state:
+        name = "world"
+
+    view:
+        stack(padding: 40, gap: 16, align: center):
+            text("Hello, Weave.", font: 36, bold: true)
+            text(f"Nice to meet you, {name}.", muted: true)
+
+            input(bind: name, placeholder: "Your name", on_enter: {
+                toast(f"Hello, {name}!", "success")
+            })
+
+            row(gap: 10):
+                badge("single file", variant: primary)
+                badge("zero deps", variant: success)
+                badge("reactive", variant: info)
