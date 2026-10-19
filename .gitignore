@@ -1,0 +1,33 @@
+# Zig
+zig-cache/
+.zig-cache/
+zig-out/
+*.o
+*.obj
+
+# Build artifacts
+/bin/
+/dist/
+weave
+weave.exe
+weave-itest
+weave-itest.exe
+
+# Editors / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local tooling (sandbox only, never committed)
+.zigtool/
+
+# Compiler output / scratch from local runs
+*.wvbc
+/pkg/
+/out/
+/dist/
+/examples-bin/
+itest-app.weave
+demo-app.weave
+demo.weave

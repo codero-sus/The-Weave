@@ -1,0 +1,36 @@
+# The smallest interesting app: state, computed values, a handler with an
+# argument, and two-way input binding.
+
+app Counter:
+    state:
+        count = 0
+        step = 1
+
+    computed:
+        parity = "even" if count % 2 == 0 else "odd"
+        doubled = count * 2
+
+    handlers:
+        bump():
+            count += step
+
+        reset():
+            count = 0
+
+    view:
+        stack(padding: 32, gap: 16, align: center):
+            heading("Counter", font: 32, bold: true)
+            text("{count} is {parity}; doubled it is {doubled}")
+
+            row(gap: 8):
+                button("-step", click: {
+                    count -= step
+                })
+                button("+step", click: bump())
+                button("reset", click: reset())
+
+            divider()
+
+            row(gap: 8, align: center):
+                text("step")
+                input(bind: step, placeholder: "1", width: 80)

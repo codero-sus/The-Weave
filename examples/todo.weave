@@ -1,0 +1,25 @@
+# The canonical Weave app: one file, no build step, no JavaScript.
+#
+#   weave examples/todo.weave      -> http://127.0.0.1:8080
+#
+# Everything below runs on the server. The browser is a thin renderer that
+# receives a vdom tree and the patches that follow it.
+
+app TodoApp:
+    state:
+        tasks = ["Learn Weave", "Ship something"]
+        new_task = ""
+
+    view:
+        stack(padding: 24, align: center):
+            text("My Tasks", font: 28, bold: true)
+
+            input(bind: new_task, placeholder: "Add a task...", on_enter: {
+                tasks.append(new_task)
+                new_task = ""
+            })
+
+            for task in tasks:
+                card(shadow: sm):
+                    text(task)
+                    button("Done", click: tasks.remove(task))

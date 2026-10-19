@@ -1,0 +1,32 @@
+# theme: and styles: compile to map-valued signals, so a component can restyle
+# itself by writing to them like any other state.
+
+app Themed:
+    state:
+        dark = false
+
+    theme:
+        bg = "#0f1115" if dark else "#f7f7f9"
+        fg = "#eceef4" if dark else "#14161a"
+        accent = "#8b8cff" if dark else "#4f46e5"
+
+    styles:
+        page = { "padding": 32, "gap": 16 }
+        title = { "font": 30, "bold": true }
+
+    handlers:
+        toggle():
+            dark = not dark
+
+    view:
+        # styles: entries are map-valued signals, read by index like any map.
+        stack(padding: styles.page["padding"], gap: styles.page["gap"],
+              bg: theme.bg, color: theme.fg):
+            heading("Theming", font: styles.title["font"], bold: styles.title["bold"])
+            text("dark mode is {dark}")
+
+            button("toggle theme", click: toggle())
+
+            card(shadow: md, padding: styles.page["padding"], bg: theme.bg):
+                text("This card follows theme.bg", color: theme.fg)
+                text("accent: {theme.accent}", color: theme.accent)

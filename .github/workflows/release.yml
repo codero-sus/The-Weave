@@ -1,0 +1,286 @@
+name: Release
+
+# Push a tag like `v0.1.0` (or dispatch this workflow with a tag name) and the
+# pipeline cross-compiles the CLI for every supported target, pre-compiles the
+# bundled examples into `.wvbc` bytecode, packs them together and publishes the
+# result as a GitHub Release.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish, e.g. v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  ZIG_VERSION: "0.13.0"
+
+jobs:
+  # ------------------------------------------------------------- resolve ----
+  version:
+    name: resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - id: v
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          if [ -z "$TAG" ]; then
+            echo "::error::no tag given"
+            exit 1
+          fi
+          if ! git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
+            echo "::error::tag $TAG does not exist in this repository"
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing weave $VERSION from $TAG"
+
+  # ------------------------------------------------------- pre-compiled ----
+  # One native build of the compiler turns every example into a standalone
+  # bytecode artifact that ships inside each platform package.
+  examples:
+    name: pre-compile examples
+    runs-on: ubuntu-latest
+    needs: version
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build the compiler
+        run: zig build -Doptimize=ReleaseSafe -Dversion=${{ needs.version.outputs.version }}
+
+      - name: Compile examples/*.weave -> .wvbc
+        run: |
+          set -euo pipefail
+          mkdir -p examples-bin
+          for src in examples/*.weave; do
+            out="examples-bin/$(basename "$src" .weave).wvbc"
+            ./zig-out/bin/weave build "$src" -o "$out"
+          done
+
+      - name: Verify the artifacts load
+        run: |
+          set -euo pipefail
+          ./zig-out/bin/weave check examples-bin/*.wvbc
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: weave-examples-wvbc
+          path: examples-bin/
+          if-no-files-found: error
+
+  # ---------------------------------------------------------- packaging ----
+  package:
+    name: package ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    needs: [version, examples]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: x86_64-linux-musl,  target: x86_64-linux-musl,  archive: tar.gz, exe: weave,     runs-here: true }
+          - { name: x86_64-linux-gnu,   target: x86_64-linux-gnu,   archive: tar.gz, exe: weave,     runs-here: true }
+          - { name: aarch64-linux-gnu,  target: aarch64-linux-gnu,  archive: tar.gz, exe: weave,     runs-here: false }
+          - { name: x86_64-macos,       target: x86_64-macos-none,  archive: tar.gz, exe: weave,     runs-here: false }
+          - { name: aarch64-macos,      target: aarch64-macos-none, archive: tar.gz, exe: weave,     runs-here: false }
+          - { name: x86_64-windows,     target: x86_64-windows-gnu, archive: zip,    exe: weave.exe, runs-here: false }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Cross-compile for ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          zig build \
+            -Dtarget=${{ matrix.target }} \
+            -Doptimize=ReleaseSafe \
+            -Dversion=${{ needs.version.outputs.version }} \
+            --prefix "pkg/weave-${{ needs.version.outputs.version }}-${{ matrix.name }}"
+
+      - name: Download pre-compiled examples
+        uses: actions/download-artifact@v4
+        with:
+          name: weave-examples-wvbc
+          path: examples-bin
+
+      - name: Assemble the package
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.version.outputs.version }}"
+          ROOT="pkg/weave-$VERSION-${{ matrix.name }}"
+          mkdir -p "$ROOT/examples"
+
+          # Windows cross-builds also emit a debug database; keep packages lean.
+          rm -f "$ROOT"/bin/*.pdb
+
+          # Sources next to their pre-compiled bytecode: `weave run` accepts both.
+          cp examples/*.weave "$ROOT/examples/"
+          cp examples-bin/*.wvbc "$ROOT/examples/"
+          cp README.md "$ROOT/"
+
+          {
+            echo "weave $VERSION"
+            echo "target:  ${{ matrix.target }}"
+            echo "optimize: ReleaseSafe"
+            echo "zig:     ${{ env.ZIG_VERSION }}"
+            echo ""
+            echo "run an example:"
+            echo "  bin/${{ matrix.exe }} run examples/todo.weave"
+            echo "or the pre-compiled bytecode:"
+            echo "  bin/${{ matrix.exe }} run examples/todo.wvbc"
+          } > "$ROOT/VERSION.txt"
+
+          ls -R "$ROOT" | head -40
+
+      - name: Verify the packaged binary
+        if: matrix.runs-here
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.version.outputs.version }}"
+          weave="pkg/weave-$VERSION-${{ matrix.name }}/bin/${{ matrix.exe }}"
+          "$weave" version
+          "$weave" check "pkg/weave-$VERSION-${{ matrix.name }}"/examples/*.weave
+          "$weave" check "pkg/weave-$VERSION-${{ matrix.name }}"/examples/*.wvbc
+
+      - name: Archive
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.version.outputs.version }}"
+          NAME="weave-$VERSION-${{ matrix.name }}"
+          mkdir -p out
+          cd pkg
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            zip -qr "../out/$NAME.zip" "$NAME"
+          else
+            tar -czf "../out/$NAME.tar.gz" "$NAME"
+          fi
+          cd ..
+          ls -la out/
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: out/
+          if-no-files-found: error
+
+  # ---------------------------------------------------------- publish ------
+  publish:
+    name: publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [version, package]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Collect packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum ./*.tar.gz ./*.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Release notes
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          {
+            echo "weave $VERSION — one file, full stack."
+            echo
+            echo "Pre-built CLI for every supported target, with the bundled examples"
+            echo "pre-compiled to \`.wvbc\` bytecode so \`weave run examples/todo.wvbc\`"
+            echo "starts without touching the parser."
+            echo
+            echo "| Package | Platform |"
+            echo "| --- | --- |"
+            echo "| \`weave-$VERSION-x86_64-linux-musl.tar.gz\`  | Linux x86_64, static (musl) |"
+            echo "| \`weave-$VERSION-x86_64-linux-gnu.tar.gz\`   | Linux x86_64 (glibc) |"
+            echo "| \`weave-$VERSION-aarch64-linux-gnu.tar.gz\`  | Linux arm64 (glibc) |"
+            echo "| \`weave-$VERSION-x86_64-macos.tar.gz\`       | macOS Intel |"
+            echo "| \`weave-$VERSION-aarch64-macos.tar.gz\`      | macOS Apple Silicon |"
+            echo "| \`weave-$VERSION-x86_64-windows.zip\`        | Windows x86_64 |"
+            echo
+            echo "### Notes"
+            echo
+            echo "Binaries are built by GitHub Actions with Zig ${{ env.ZIG_VERSION }} and are not"
+            echo "code-signed. macOS may quarantine a downloaded binary"
+            echo "(\`xattr -d com.apple.quarantine bin/weave\`) and Windows SmartScreen may ask for"
+            echo "confirmation; both are expected for an unsigned build."
+            echo
+            echo "Each package ships the example sources **and** their pre-compiled \`.wvbc\`"
+            echo "bytecode, so \`weave run examples/todo.wvbc\` starts without parsing anything."
+            echo
+            echo "### Quick start"
+            echo
+            echo "\`\`\`sh"
+            echo "tar -xzf weave-$VERSION-x86_64-linux-musl.tar.gz"
+            echo "cd weave-$VERSION-x86_64-linux-musl"
+            echo "./bin/weave run examples/todo.weave    # http://localhost:8080"
+            echo "\`\`\`"
+            echo
+            echo "### Commits"
+            echo
+            echo "\`\`\`"
+            PREVIOUS="$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)"
+            if [ -n "$PREVIOUS" ]; then
+              git log --no-merges --oneline "$PREVIOUS..$TAG"
+            else
+              git log --no-merges --oneline -n 25 "$TAG"
+            fi
+            echo "\`\`\`"
+          } > notes.md
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd dist
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" ./*.tar.gz ./*.zip SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" ./*.tar.gz ./*.zip SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "weave $VERSION" \
+              --notes-file ../notes.md
+          fi
