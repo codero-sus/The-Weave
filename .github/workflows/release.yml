@@ -99,16 +99,40 @@ jobs:
             ./zig-out/bin/weave build "$src" -o "$out"
           done
 
+      # One self-contained page per example. These need no weave, no server and
+      # no build step: download one, double-click it, and the app runs.
+      - name: Export examples/*.weave -> .html
+        run: |
+          set -euo pipefail
+          mkdir -p examples-html
+          for src in examples/*.weave; do
+            stem="$(basename "$src" .weave)"
+            ./zig-out/bin/weave build "$src" --html "examples-html/$stem.html"
+          done
+
       - name: Verify the artifacts load
         run: |
           set -euo pipefail
           ./zig-out/bin/weave check examples-bin/*.wvbc
+          for bc in examples-bin/*.wvbc; do
+            ./zig-out/bin/weave run "$bc" --selftest
+          done
+
+      - name: Verify the pages boot
+        run: node tools/check-html.mjs examples-html/*.html
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: weave-examples-wvbc
           path: examples-bin/
+          if-no-files-found: error
+
+      - name: Upload single-file apps
+        uses: actions/upload-artifact@v4
+        with:
+          name: weave-examples-html
+          path: examples-html/
           if-no-files-found: error
 
   # ---------------------------------------------------------- packaging ----
@@ -148,6 +172,12 @@ jobs:
           name: weave-examples-wvbc
           path: examples-bin
 
+      - name: Download single-file apps
+        uses: actions/download-artifact@v4
+        with:
+          name: weave-examples-html
+          path: examples-html
+
       - name: Assemble the package
         run: |
           set -euo pipefail
@@ -161,6 +191,8 @@ jobs:
           # Sources next to their pre-compiled bytecode: `weave run` accepts both.
           cp examples/*.weave "$ROOT/examples/"
           cp examples-bin/*.wvbc "$ROOT/examples/"
+          # ... and next to a page that runs without weave at all.
+          cp examples-html/*.html "$ROOT/examples/"
           cp README.md "$ROOT/"
 
           {
@@ -173,6 +205,9 @@ jobs:
             echo "  bin/${{ matrix.exe }} run examples/todo.weave"
             echo "or the pre-compiled bytecode:"
             echo "  bin/${{ matrix.exe }} run examples/todo.wvbc"
+            echo ""
+            echo "no weave at all: open examples/todo.html in a browser"
+            echo "ship an app:     bin/${{ matrix.exe }} build examples/todo.weave --exe todoapp"
           } > "$ROOT/VERSION.txt"
 
           ls -R "$ROOT" | head -40
@@ -183,9 +218,16 @@ jobs:
           set -euo pipefail
           VERSION="${{ needs.version.outputs.version }}"
           weave="pkg/weave-$VERSION-${{ matrix.name }}/bin/${{ matrix.exe }}"
+          root="pkg/weave-$VERSION-${{ matrix.name }}"
           "$weave" version
-          "$weave" check "pkg/weave-$VERSION-${{ matrix.name }}"/examples/*.weave
-          "$weave" check "pkg/weave-$VERSION-${{ matrix.name }}"/examples/*.wvbc
+          "$weave" check "$root"/examples/*.weave
+          "$weave" check "$root"/examples/*.wvbc
+
+          # The package must be able to hand out an app that needs nothing else.
+          "$weave" build "$root/examples/todo.weave" --exe /tmp/todoapp
+          /tmp/todoapp --selftest
+          /tmp/todoapp build "$root/examples/counter.weave" --html /tmp/counter.html
+          node tools/check-html.mjs /tmp/counter.html
 
       - name: Archive
         run: |
@@ -228,6 +270,23 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # The single-file apps go on the release page as well: no platform to
+      # pick, nothing to install — download one, open it, the app runs.
+      - name: Download single-file apps
+        uses: actions/download-artifact@v4
+        with:
+          name: weave-examples-html
+          path: examples-html
+
+      - name: Bundle the single-file apps
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd examples-html
+          zip -q -r "../dist/weave-$VERSION-examples-html.zip" ./*.html
+          ls -l ../dist
+
       - name: Checksums
         run: |
           set -euo pipefail
@@ -267,12 +326,24 @@ jobs:
             echo "Each package ships the example sources **and** their pre-compiled \`.wvbc\`"
             echo "bytecode, so \`weave run examples/todo.wvbc\` starts without parsing anything."
             echo
+            echo "\`weave-$VERSION-examples-html.zip\` is those same apps as single \`.html\` files:"
+            echo "engine, bytecode and styles inline, so opening one in a browser runs the app"
+            echo "with no server, no build step and nothing installed."
+            echo
             echo "### Quick start"
             echo
             echo "\`\`\`sh"
             echo "tar -xzf weave-$VERSION-x86_64-linux-musl.tar.gz"
             echo "cd weave-$VERSION-x86_64-linux-musl"
             echo "./bin/weave run examples/todo.weave    # http://localhost:8080"
+            echo "\`\`\`"
+            echo
+            echo "Or ship the app itself — one file that needs no weave to run:"
+            echo
+            echo "\`\`\`sh"
+            echo "./bin/weave build examples/todo.weave --exe todoapp"
+            echo "./todoapp                                # http://localhost:8080"
+            echo "./todoapp --selftest                     # boots and reports, no server"
             echo "\`\`\`"
             echo
             echo "### Commits"

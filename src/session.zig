@@ -19,6 +19,7 @@ const diff = @import("diff.zig");
 const proto = @import("proto.zig");
 const jsonw = @import("jsonw.zig");
 const vm = @import("vm.zig");
+const host = @import("host.zig");
 
 pub const SendError = error{ Closed, OutOfMemory };
 pub const Sink = *const fn (ctx: *anyopaque, bytes: []const u8) SendError!void;
@@ -130,7 +131,7 @@ pub const Session = struct {
 
     /// Initialise signals, register effects and produce the first mount frame.
     pub fn start(self: *Session) !void {
-        self.now_ms = std.time.milliTimestamp();
+        self.now_ms = host.nowMs();
 
         for (self.unit.signals) |sig| {
             _ = try self.store.addSignal(sig.name, sig.kind);
@@ -409,8 +410,7 @@ pub const Session = struct {
 
     fn hostLog(ctx: *anyopaque, msg: []const u8) void {
         const self: *Session = @ptrCast(@alignCast(ctx));
-        const w = std.io.getStdErr().writer();
-        w.print("[{s}] {s}\n", .{ self.unit.app_name, msg }) catch {};
+        host.logf("[{s}] {s}\n", .{ self.unit.app_name, msg });
     }
 
     // -- output -------------------------------------------------------------
@@ -484,7 +484,7 @@ pub const Session = struct {
             buf.append('\n') catch {};
             buf.appendSlice(trace) catch {};
         } else |_| {}
-        std.io.getStdErr().writer().print("weave: runtime error in {s}\n{s}\n", .{ self.unit.app_name, buf.items }) catch {};
+        host.logf("weave: runtime error in {s}\n{s}\n", .{ self.unit.app_name, buf.items });
         self.vmx.resetError();
         self.sendFrame(.{ .err = buf.items }) catch {};
     }

@@ -128,6 +128,23 @@ pub fn load(parent: std.mem.Allocator, path: []const u8, color: bool) LoadError!
     return m;
 }
 
+/// Build a module from `.wvbc` bytes already in memory. Used by packaged
+/// executables, where the bytecode is appended to the engine binary itself.
+pub fn fromBytecode(parent: std.mem.Allocator, path: []const u8, bytes: []const u8) LoadError!*Module {
+    const owned_path = parent.dupe(u8, path) catch return error.OutOfMemory;
+    errdefer parent.free(owned_path);
+    const loaded = bytecode.decode(parent, bytes) catch return error.BadBytecode;
+    const m = try parent.create(Module);
+    m.* = .{
+        .parent = parent,
+        .arena = loaded.arena,
+        .unit = loaded.unit,
+        .path = owned_path,
+        .precompiled = true,
+    };
+    return m;
+}
+
 /// `weave build`: serialise a compiled unit to `.wvbc`.
 pub fn writeBytecode(parent: std.mem.Allocator, unit: *const bytecode.CodeUnit, out_path: []const u8) !void {
     var enc = bytecode.Encoder.init(parent);

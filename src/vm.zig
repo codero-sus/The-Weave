@@ -18,6 +18,7 @@ const bytecode = @import("bytecode.zig");
 const builtins = @import("builtins.zig");
 const reactive = @import("reactive.zig");
 const vdom = @import("vdom.zig");
+const host = @import("host.zig");
 
 pub const Error = error{ WeaveRuntime, OutOfMemory };
 
@@ -270,7 +271,7 @@ pub const Vm = struct {
                     const k = self.stack.items[base + i * 2];
                     const v = self.stack.items[base + i * 2 + 1];
                     const key = try displayString(k);
-                    defer self.alloc.free(key);
+                    defer value.alloc.free(key);
                     if (m.map.set(key, v)) |_| {
                         k.release();
                     } else |_| {
@@ -379,7 +380,7 @@ pub const Vm = struct {
                 const base = self.stack.items.len - n;
                 for (self.stack.items[base..]) |part| {
                     const s = try displayString(part);
-                    defer self.alloc.free(s);
+                    defer value.alloc.free(s);
                     try out.appendSlice(s);
                     part.release();
                 }
@@ -462,13 +463,24 @@ pub const Vm = struct {
                 const fi: u32 = @intCast(ins.a);
                 if (fi >= self.unit.funcs.len) return self.fail("internal error: bad closure index", .{});
                 const target = &self.unit.funcs[fi];
-                const captures = try self.alloc.alloc(value.Value, target.capture_srcs.len);
-                errdefer self.alloc.free(captures);
+                // A closure escapes the VM: it is retained by the vdom, by
+                // timers, by other values, and eventually freed by
+                // `value.release` — which always uses the process-wide value
+                // allocator. The VM's own allocator may be a session or export
+                // arena that dies long before the closure does, so the box and
+                // its captures must come from `value.alloc`, not `self.alloc`.
+                const captures = try value.alloc.alloc(value.Value, target.capture_srcs.len);
+                var filled: usize = 0;
+                errdefer {
+                    for (captures[0..filled]) |c| c.release();
+                    value.alloc.free(captures);
+                }
                 for (target.capture_srcs, 0..) |src, i| {
                     captures[i] = if (src < locals.len) locals[src].retain() else value.Value{ .nil = {} };
+                    filled += 1;
                 }
-                const box = try self.alloc.create(value.FuncBox);
-                errdefer self.alloc.destroy(box);
+                const box = try value.alloc.create(value.FuncBox);
+                errdefer value.alloc.destroy(box);
                 box.* = .{ .rc = 1, .name = target.name, .func_idx = fi, .captures = captures };
                 try self.push(.{ .func = box });
             },
@@ -522,7 +534,7 @@ pub const Vm = struct {
                 const v = try self.pop();
                 defer v.release();
                 const s = try displayString(v);
-                defer self.alloc.free(s);
+                defer value.alloc.free(s);
                 try b.text(try value.makeStr(s));
             },
             .ui_key => {
@@ -589,7 +601,7 @@ pub const Vm = struct {
             },
             .map => |m| {
                 const key = try displayString(idx);
-                defer self.alloc.free(key);
+                defer value.alloc.free(key);
                 if (m.get(key)) |v| return v.retain();
                 return value.Value{ .nil = {} };
             },
@@ -612,7 +624,7 @@ pub const Vm = struct {
             },
             .map => |m| {
                 const key = try displayString(idx);
-                defer self.alloc.free(key);
+                defer value.alloc.free(key);
                 if (m.set(key, v)) |_| {} else |_| {
                     v.release();
                     return error.OutOfMemory;
@@ -720,9 +732,9 @@ pub const Vm = struct {
         if (op == .add) {
             if (a == .str or b == .str) {
                 const sa = try displayString(a);
-                defer self.alloc.free(sa);
+                defer value.alloc.free(sa);
                 const sb = try displayString(b);
-                defer self.alloc.free(sb);
+                defer value.alloc.free(sb);
                 var buf = std.ArrayList(u8).init(self.alloc);
                 defer buf.deinit();
                 try buf.appendSlice(sa);
@@ -865,7 +877,7 @@ pub const Vm = struct {
             defer sep_buf.deinit();
             if (args.len > 0) {
                 const s = try displayString(args[0]);
-                defer self.alloc.free(s);
+                defer value.alloc.free(s);
                 try sep_buf.appendSlice(s);
             }
             var buf = std.ArrayList(u8).init(self.alloc);
@@ -873,7 +885,7 @@ pub const Vm = struct {
             for (l.items.items, 0..) |it, i| {
                 if (i > 0) try buf.appendSlice(sep_buf.items);
                 const part = try displayString(it);
-                defer self.alloc.free(part);
+                defer value.alloc.free(part);
                 try buf.appendSlice(part);
             }
             return try value.makeStr(buf.items);
@@ -955,7 +967,7 @@ pub const Vm = struct {
                 return out;
             }
             const sep = try displayString(args[0]);
-            defer self.alloc.free(sep);
+            defer value.alloc.free(sep);
             if (sep.len == 0) {
                 for (s.bytes) |c| try out.list.items.append(try value.makeStr(std.mem.sliceTo(&[_]u8{ c, 0 }, 0)));
                 return out;
@@ -966,9 +978,9 @@ pub const Vm = struct {
         }
         if (eqStr(name, "replace")) {
             const from = try displayString(try self.argAt(args, 0, name));
-            defer self.alloc.free(from);
+            defer value.alloc.free(from);
             const to = try displayString(try self.argAt(args, 1, name));
-            defer self.alloc.free(to);
+            defer value.alloc.free(to);
             if (from.len == 0) return try value.makeStr(s.bytes);
             var buf = std.ArrayList(u8).init(self.alloc);
             defer buf.deinit();
@@ -983,22 +995,22 @@ pub const Vm = struct {
         }
         if (eqStr(name, "contains") or eqStr(name, "has")) {
             const needle = try displayString(try self.argAt(args, 0, name));
-            defer self.alloc.free(needle);
+            defer value.alloc.free(needle);
             return .{ .boolean = std.mem.indexOf(u8, s.bytes, needle) != null };
         }
         if (eqStr(name, "starts_with")) {
             const p = try displayString(try self.argAt(args, 0, name));
-            defer self.alloc.free(p);
+            defer value.alloc.free(p);
             return .{ .boolean = std.mem.startsWith(u8, s.bytes, p) };
         }
         if (eqStr(name, "ends_with")) {
             const p = try displayString(try self.argAt(args, 0, name));
-            defer self.alloc.free(p);
+            defer value.alloc.free(p);
             return .{ .boolean = std.mem.endsWith(u8, s.bytes, p) };
         }
         if (eqStr(name, "index_of") or eqStr(name, "find")) {
             const needle = try displayString(try self.argAt(args, 0, name));
-            defer self.alloc.free(needle);
+            defer value.alloc.free(needle);
             const i = std.mem.indexOf(u8, s.bytes, needle) orelse return value.Value{ .int = -1 };
             return .{ .int = @intCast(i) };
         }
@@ -1032,7 +1044,7 @@ pub const Vm = struct {
                     for (lb.items.items, 0..) |it, i| {
                         if (i > 0) try buf.appendSlice(s.bytes);
                         const part = try displayString(it);
-                        defer self.alloc.free(part);
+                        defer value.alloc.free(part);
                         try buf.appendSlice(part);
                     }
                     return try value.makeStr(buf.items);
@@ -1046,14 +1058,14 @@ pub const Vm = struct {
     fn mapMethod(self: *Vm, m: *value.MapBox, name: []const u8, args: []const value.Value) Error!value.Value {
         if (eqStr(name, "get") or eqStr(name, "at")) {
             const key = try displayString(try self.argAt(args, 0, name));
-            defer self.alloc.free(key);
+            defer value.alloc.free(key);
             if (m.get(key)) |v| return v.retain();
             if (args.len > 1) return args[1].retain();
             return value.Value{ .nil = {} };
         }
         if (eqStr(name, "set") or eqStr(name, "put")) {
             const key = try displayString(try self.argAt(args, 0, name));
-            defer self.alloc.free(key);
+            defer value.alloc.free(key);
             const v = (try self.argAt(args, 1, name)).retain();
             if (m.set(key, v)) |_| {} else |_| {
                 v.release();
@@ -1063,12 +1075,12 @@ pub const Vm = struct {
         }
         if (eqStr(name, "has") or eqStr(name, "contains")) {
             const key = try displayString(try self.argAt(args, 0, name));
-            defer self.alloc.free(key);
+            defer value.alloc.free(key);
             return .{ .boolean = m.get(key) != null };
         }
         if (eqStr(name, "remove") or eqStr(name, "delete")) {
             const key = try displayString(try self.argAt(args, 0, name));
-            defer self.alloc.free(key);
+            defer value.alloc.free(key);
             return .{ .boolean = m.remove(key) };
         }
         if (eqStr(name, "keys")) {
@@ -1099,7 +1111,7 @@ pub const Vm = struct {
         if (eqStr(name, "clear")) {
             for (m.entries.items) |e| {
                 e.value.release();
-                self.alloc.free(e.key);
+                value.alloc.free(e.key);
             }
             m.entries.clearRetainingCapacity();
             return value.Value{ .nil = {} };
@@ -1118,7 +1130,7 @@ pub const Vm = struct {
         if (eqStr(name, "ceil")) return .{ .int = @intFromFloat(@ceil(f)) };
         if (eqStr(name, "str")) {
             const s = try displayString(v);
-            defer self.alloc.free(s);
+            defer value.alloc.free(s);
             return try value.makeStr(s);
         }
         if (eqStr(name, "int")) return .{ .int = v.toInt() };
@@ -1134,7 +1146,7 @@ pub const Vm = struct {
             .len, .count => return .{ .int = countOf(a) },
             .str => {
                 const s = try displayString(a);
-                defer self.alloc.free(s);
+                defer value.alloc.free(s);
                 return try value.makeStr(s);
             },
             .int => return .{ .int = a.toInt() },
@@ -1224,17 +1236,17 @@ pub const Vm = struct {
                 for (args, 0..) |arg, i| {
                     if (i > 0) try buf.append(' ');
                     const s = try displayString(arg);
-                    defer self.alloc.free(s);
+                    defer value.alloc.free(s);
                     try buf.appendSlice(s);
                 }
                 if (self.host) |h| {
                     h.log(h.ctx, buf.items);
                 } else {
-                    std.debug.print("{s}\n", .{buf.items});
+                    host.logf("{s}\n", .{buf.items});
                 }
                 return value.Value{ .nil = {} };
             },
-            .now => return .{ .int = std.time.milliTimestamp() },
+            .now => return .{ .int = host.nowMs() },
             .random => {
                 self.rng = nextRand(self.rng);
                 const f = @as(f64, @floatFromInt(self.rng >> 11)) / 9007199254740992.0;

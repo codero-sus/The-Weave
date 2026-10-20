@@ -8,3 +8,8 @@
 pub const index_html = @embedFile("index.html");
 pub const client_js = @embedFile("client.js");
 pub const client_css = @embedFile("client.css");
+
+/// The in-page engine: `weave-core.wasm` is built from src/wasm.zig by
+/// `zig build wasm` and committed, so `weave build --html` can produce a
+/// self-contained page from a plain `zig build`.
+pub const core_wasm = @embedFile("weave-core.wasm");

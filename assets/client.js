@@ -1,8 +1,13 @@
 /* Weave browser client.
  *
- * The server owns all application state. This file is a thin, dependency-free
+ * The engine owns all application state. This file is a thin, dependency-free
  * renderer: it turns the JSON vdom it receives into DOM, applies patch ops in
- * place, and sends user interaction back over the same socket.
+ * place, and sends user interaction back over the same transport.
+ *
+ * Two transports, one renderer:
+ *   * a WebSocket to `weave serve` (the server runs the app)
+ *   * the in-page WebAssembly engine that `weave build --html` embeds, so a
+ *     single .html file runs the app with no server at all
  *
  * Frames in:  hello | mount | patch | error | reload | state | pong
  * Frames out: event | input | ping
@@ -16,7 +21,7 @@
   var appEl = document.getElementById("app");
   var statusEl = document.getElementById("weave-status");
   var errorEl = document.getElementById("weave-error");
-  var ws = null;
+  var transport = null;
   var retry = 0;
   var lastSentValue = new Map(); // id -> string we last reported
   var appName = "Weave";
@@ -281,7 +286,7 @@
   // -------------------------------------------------------------- events ---
 
   function send(obj) {
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+    if (transport) transport.send(obj);
   }
 
   function fireEvent(rec, name, args) {
@@ -473,65 +478,128 @@
     document.title = appName;
   }
 
-  function connect() {
+  // ------------------------------------------------------------ transport ---
+
+  function handleMessage(data) {
+    var msg;
+    try {
+      msg = JSON.parse(data);
+    } catch (e) {
+      return;
+    }
+    switch (msg.t) {
+      case "hello":
+        appName = msg.app || "Weave";
+        break;
+      case "mount":
+        showError("");
+        mount(msg.root);
+        break;
+      case "patch":
+        showError("");
+        applyOps(msg.ops || []);
+        break;
+      case "state":
+        window.__weave_state = msg.state;
+        break;
+      case "error":
+        showError(msg.message || "runtime error");
+        break;
+      case "reload":
+        setStatus("reloading…", "pending");
+        if (transport) transport.close();
+        setTimeout(connect, 60);
+        break;
+      case "pong":
+        break;
+    }
+  }
+
+  function connectSocket() {
     var proto = location.protocol === "https:" ? "wss://" : "ws://";
     setStatus("connecting…", "pending");
-    ws = new WebSocket(proto + location.host + WS_PATH);
+    var ws = new WebSocket(proto + location.host + WS_PATH);
 
     ws.onopen = function () {
       retry = 0;
       setStatus("", "");
     };
-
     ws.onmessage = function (ev) {
-      var msg;
-      try {
-        msg = JSON.parse(ev.data);
-      } catch (e) {
-        return;
-      }
-      switch (msg.t) {
-        case "hello":
-          appName = msg.app || "Weave";
-          break;
-        case "mount":
-          showError("");
-          mount(msg.root);
-          break;
-        case "patch":
-          showError("");
-          applyOps(msg.ops || []);
-          break;
-        case "state":
-          window.__weave_state = msg.state;
-          break;
-        case "error":
-          showError(msg.message || "runtime error");
-          break;
-        case "reload":
-          setStatus("reloading…", "pending");
-          try {
-            ws.close();
-          } catch (e) {}
-          setTimeout(connect, 60);
-          break;
-        case "pong":
-          break;
-      }
+      handleMessage(ev.data);
     };
-
     ws.onclose = function () {
       setStatus("disconnected — retrying", "down");
       var delay = Math.min(4000, 200 * Math.pow(1.7, retry++));
       setTimeout(connect, delay);
     };
-
     ws.onerror = function () {
       setStatus("connection error", "down");
     };
+
+    transport = {
+      kind: "websocket",
+      send: function (obj) {
+        if (ws.readyState === 1) ws.send(JSON.stringify(obj));
+      },
+      close: function () {
+        try {
+          ws.close();
+        } catch (e) {}
+      },
+    };
   }
 
-  // Keep the server's timers ticking even when the tab is idle.
+  // The page is the clock here: `after <ms>:` timers fire off this interval,
+  // which is also what the server's socket poll does in the hosted case.
+  var LOCAL_TICK_MS = 50;
+
+  function drainLocal(eng) {
+    for (;;) {
+      var frame = eng.nextFrame();
+      if (!frame) break;
+      handleMessage(frame);
+    }
+    var log = eng.takeLog();
+    if (log) {
+      log.split("\n").forEach(function (line) {
+        if (line) console.log("[weave]", line);
+      });
+    }
+    var dropped = eng.logDropped();
+    if (dropped) console.warn("[weave] dropped " + dropped + " log byte(s)");
+  }
+
+  function connectLocal() {
+    var eng = window.__WEAVE_LOCAL__;
+    transport = {
+      kind: "wasm",
+      send: function (obj) {
+        eng.dispatch(JSON.stringify(obj));
+        drainLocal(eng);
+      },
+      close: function () {},
+    };
+
+    var failed = eng.start();
+    if (failed) {
+      showError(eng.diagnostics() || "the embedded app failed to start");
+      return;
+    }
+    drainLocal(eng);
+    setStatus("", "");
+
+    setInterval(function () {
+      eng.tick(Date.now());
+      drainLocal(eng);
+    }, LOCAL_TICK_MS);
+  }
+
+  function connect() {
+    if (window.__WEAVE_LOCAL__) connectLocal();
+    else connectSocket();
+  }
+
+  // Keep the engine's connection warm even when the tab is idle.
   setInterval(function () {
     send({ t: "ping" });
   }, 25000);
@@ -542,6 +610,13 @@
   window.weave = {
     nodes: nodes,
     send: send,
+    handleMessage: handleMessage,
+    get transport() {
+      return transport ? transport.kind : null;
+    },
+    get app() {
+      return appName;
+    },
     get state() {
       return window.__weave_state;
     },

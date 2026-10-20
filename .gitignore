@@ -28,6 +28,7 @@ weave-itest.exe
 /out/
 /dist/
 /examples-bin/
+/examples-html/
 itest-app.weave
 demo-app.weave
 demo.weave

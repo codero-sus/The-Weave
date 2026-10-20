@@ -20,7 +20,10 @@ const parser = @import("parser.zig");
 const compiler = @import("compiler.zig");
 const bytecode = @import("bytecode.zig");
 const module = @import("module.zig");
+const package = @import("package.zig");
 const server = @import("server.zig");
+const session = @import("session.zig");
+const vdom = @import("vdom.zig");
 
 pub const version = build_options.version;
 
@@ -40,35 +43,53 @@ pub const help_text =
     \\
     \\USAGE
     \\    weave [COMMAND] [OPTIONS] <file.weave|file.wvbc>
+    \\    weave                       run the one .weave file in this directory
     \\
     \\COMMANDS
     \\    run        Serve the app over HTTP+WebSocket with hot reload (default)
     \\    serve      Alias for run
     \\    check      Parse, type-check and compile; exit non-zero on errors
-    \\    build      Compile to a standalone bytecode artifact (.wvbc)
+    \\    build      Compile to a standalone artifact: .wvbc, .html or an executable
     \\    dump       Print the bytecode disassembly of a source or .wvbc file
     \\    ast        Print the normalised parse tree
     \\    new        Write a starter app to a new file
     \\    version    Print the version and exit
     \\    help       Show this message
     \\
+    \\BUILD FORMATS
+    \\    --format wvbc   pre-compiled bytecode, run by any weave (the default)
+    \\    --format html   one self-contained page — engine, app and styles inline;
+    \\                    no server and no build step, just open it in a browser
+    \\    --format exe    this engine with your app compiled into it; the result
+    \\                    runs on its own, with nothing else installed
+    \\    --html, --exe   shorthand for --format html / --format exe, and they take
+    \\                    the output path directly:  --html dist/todo.html
+    \\
     \\OPTIONS
     \\    --host ADDR    Address to bind            (default 127.0.0.1)
     \\    --port N       Port to bind               (default 8080, 0 = any free port)
     \\    --open         Open the app in a browser once the server is up
+    \\    --no-open      Do not; a terminal opens the browser by default
     \\    --no-reload    Disable hot reload
     \\    --poll MS      Socket poll interval / timer resolution (default 50)
     \\    --quiet        Suppress server log lines
     \\    --no-color     Disable ANSI colour in diagnostics
-    \\    -o, --out FILE Output path for `build`    (default: input with .wvbc)
+    \\    --selftest     Boot the app once, report what rendered, and exit
+    \\    -o, --out FILE Output path for `build`    (default: input name + format)
     \\    -h, --help     Show this message
     \\
     \\EXAMPLES
     \\    weave examples/todo.weave
-    \\    weave run examples/counter.weave --port 3000 --open
-    \\    weave build examples/todo.weave -o dist/todo.wvbc
+    \\    weave run examples/counter.weave --port 3000
+    \\    weave build examples/todo.weave                      ->  todo.wvbc
+    \\    weave build examples/todo.weave --html dist/todo.html
+    \\    weave build examples/todo.weave --exe dist/todoapp   ->  ./dist/todoapp
     \\    weave check examples/*.weave
     \\    weave dump dist/todo.wvbc
+    \\
+    \\An executable from `build --exe` runs its own app: `./todoapp` serves it and
+    \\`./todoapp --selftest` checks it. It is still a full weave, so
+    \\`./todoapp build other.weave --html other.html` works too.
     \\
 ;
 
@@ -130,6 +151,13 @@ pub const Args = struct {
     out: ?[]const u8 = null,
     opts: server.Options = .{},
     want_help: bool = false,
+    /// `build` output form; null means "infer from -o, else .wvbc".
+    format: ?package.Format = null,
+    /// True when the user asked for --open explicitly, so auto-open stays out of
+    /// the way of scripted runs.
+    open_explicit: bool = false,
+    /// Packaged binaries: load the embedded app, render once, report and exit.
+    selftest: bool = false,
 };
 
 pub fn parseArgs(alloc: std.mem.Allocator, argv: []const []const u8) !Args {
@@ -165,8 +193,37 @@ pub fn parseArgs(alloc: std.mem.Allocator, argv: []const []const u8) !Args {
                 if (a.opts.poll_ms == 0) a.opts.poll_ms = 50;
             } else if (eql(name, "--out") or eql(name, "-o")) {
                 a.out = inline_val orelse try next(argv, &i, name);
+            } else if (eql(name, "--format")) {
+                const v = inline_val orelse try next(argv, &i, name);
+                a.format = package.Format.parse(v) orelse {
+                    stderr().print("weave: --format expects wvbc, html or exe, got '{s}'\n", .{v}) catch {};
+                    return error.BadUsage;
+                };
+            } else if (eql(name, "--html")) {
+                a.format = .html;
+                // `--html out.html` reads as one thought, so let it be one.
+                if (inline_val) |v| {
+                    a.out = v;
+                } else if (peekValue(argv, i)) |v| {
+                    a.out = v;
+                    i += 1;
+                }
+            } else if (eql(name, "--exe")) {
+                a.format = .exe;
+                if (inline_val) |v| {
+                    a.out = v;
+                } else if (peekValue(argv, i)) |v| {
+                    a.out = v;
+                    i += 1;
+                }
+            } else if (eql(name, "--selftest")) {
+                a.selftest = true;
             } else if (eql(name, "--open")) {
                 a.opts.open_browser = true;
+                a.open_explicit = true;
+            } else if (eql(name, "--no-open")) {
+                a.opts.open_browser = false;
+                a.open_explicit = true;
             } else if (eql(name, "--no-reload")) {
                 a.opts.reload = false;
             } else if (eql(name, "--quiet")) {
@@ -204,6 +261,17 @@ pub fn parseArgs(alloc: std.mem.Allocator, argv: []const []const u8) !Args {
     return a;
 }
 
+/// Does the argument after a value-less flag look like an output path?
+/// Another flag, or a Weave source file, does not.
+fn peekValue(argv: []const []const u8, i: usize) ?[]const u8 {
+    if (i + 1 >= argv.len) return null;
+    const v = argv[i + 1];
+    if (v.len == 0 or v[0] == '-') return null;
+    if (std.mem.endsWith(u8, v, ".weave")) return null;
+    if (std.mem.endsWith(u8, v, ".wvbc")) return null;
+    return v;
+}
+
 fn next(argv: []const []const u8, i: *usize, flag: []const u8) ![]const u8 {
     if (i.* + 1 >= argv.len) {
         stderr().print("weave: {s} expects a value\n", .{flag}) catch {};
@@ -216,8 +284,11 @@ fn next(argv: []const []const u8, i: *usize, flag: []const u8) ![]const u8 {
 pub fn run(alloc: std.mem.Allocator, argv: []const []const u8) !u8 {
     var a = try parseArgs(alloc, argv);
     defer a.files.deinit();
+    // A path found by looking in this directory is ours; argv paths are not.
+    var discovered: ?[]const u8 = null;
+    defer if (discovered) |d| alloc.free(d);
 
-    if (a.want_help or (eql(a.cmd, "run") and a.files.items.len == 0 and argv.len == 0)) {
+    if (a.want_help) {
         try stdout().print(help_text, .{version});
         return 0;
     }
@@ -230,9 +301,36 @@ pub fn run(alloc: std.mem.Allocator, argv: []const []const u8) !u8 {
         return 0;
     }
     if (eql(a.cmd, "new")) return cmdNew(alloc, &a);
+
     if (a.files.items.len == 0) {
-        stderr().print("weave: no input file. Try `weave help`.\n", .{}) catch {};
-        return 2;
+        // A packaged binary *is* the app: run what was compiled into it.
+        if ((eql(a.cmd, "run") or eql(a.cmd, "serve")) and package.isPackaged()) {
+            return runEmbedded(alloc, &a);
+        }
+        // Otherwise be as forgiving as an interpreter: one .weave in this
+        // directory means "run it".
+        if (eql(a.cmd, "run") or eql(a.cmd, "serve")) {
+            if (discoverApp(alloc) catch null) |path| {
+                discovered = path;
+                try a.files.append(path);
+            } else if (argv.len == 0) {
+                // Nothing to run and nothing asked: show the way in.
+                try stdout().print(help_text, .{version});
+                return 0;
+            } else {
+                stderr().print("weave: no input file, and this directory has no single .weave app to run. Try `weave help`.\n", .{}) catch {};
+                return 2;
+            }
+        } else {
+            stderr().print("weave: no input file. Try `weave help`.\n", .{}) catch {};
+            return 2;
+        }
+    }
+
+    // Opening a browser is what a person wants; a script does not. Ask only when
+    // stdout is a terminal and the user did not say either way.
+    if ((eql(a.cmd, "run") or eql(a.cmd, "serve")) and !a.open_explicit and !a.selftest) {
+        a.opts.open_browser = std.io.getStdOut().isTty();
     }
     if (eql(a.cmd, "check")) return cmdCheck(alloc, &a);
     if (eql(a.cmd, "ast")) return cmdAst(alloc, &a);
@@ -254,13 +352,109 @@ fn cmdRun(alloc: std.mem.Allocator, a: *Args) !u8 {
         reportLoadError(path, e);
         return 1;
     };
-    var srv = try server.Server.init(alloc, path, m, a.opts);
+    if (a.selftest) {
+        defer m.deinit();
+        return bootCheck(m, path);
+    }
+    var srv = server.Server.init(alloc, path, m, a.opts) catch |e| {
+        m.deinit();
+        stderr().print("weave: cannot start server ({s})\n", .{@errorName(e)}) catch {};
+        return 1;
+    };
     defer srv.deinit();
     srv.run() catch |e| {
         stderr().print("weave: server stopped ({s})\n", .{@errorName(e)}) catch {};
         return 1;
     };
     return 0;
+}
+
+/// Boot an app with no server attached: initialise its signals, render once and
+/// report what came out. This is how CI proves that a pre-compiled `.wvbc` — or
+/// the app embedded in a packaged executable — still runs, and it is the fastest
+/// way for a person to check one too.
+fn bootCheck(m: *module.Module, label: []const u8) !u8 {
+    var sink_ctx: u8 = 0;
+    const s = session.Session.create(m.parent, m.unit, label, discardSink, @ptrCast(&sink_ctx)) catch {
+        stderr().print("weave: out of memory\n", .{}) catch {};
+        return 1;
+    };
+    defer s.destroy();
+    s.start() catch |e| {
+        stderr().print("weave: {s} failed to start ({s})\n", .{ label, @errorName(e) }) catch {};
+        return 1;
+    };
+    if (s.root == null) {
+        stderr().print("weave: {s} rendered nothing\n", .{label}) catch {};
+        return 1;
+    }
+    stdout().print("weave: {s} ok — app {s}, {d} signals, {d} functions, {d} nodes rendered\n", .{
+        label,
+        m.unit.app_name,
+        m.unit.signals.len,
+        m.unit.funcs.len,
+        s.stats.nodes,
+    }) catch {};
+    return 0;
+}
+
+/// Run the app that was compiled into this executable (`weave build --exe`).
+/// Nothing on disk is read, and nothing on disk is watched.
+fn runEmbedded(alloc: std.mem.Allocator, a: *Args) !u8 {
+    const bytes = package.embeddedApp(alloc) orelse {
+        stderr().print("weave: this binary has no embedded app\n", .{}) catch {};
+        return 1;
+    };
+    defer alloc.free(bytes);
+
+    const m = module.fromBytecode(alloc, package.embedded_label, bytes) catch |e| {
+        reportLoadError(package.embedded_label, e);
+        return 1;
+    };
+
+    if (a.selftest) {
+        defer m.deinit();
+        return bootCheck(m, package.embedded_label);
+    }
+
+    var opts = a.opts;
+    opts.reload = false; // there is no source file to watch
+    var srv = server.Server.init(alloc, m.path, m, opts) catch |e| {
+        m.deinit();
+        stderr().print("weave: cannot start server ({s})\n", .{@errorName(e)}) catch {};
+        return 1;
+    };
+    defer srv.deinit();
+    srv.run() catch |e| {
+        stderr().print("weave: server stopped ({s})\n", .{@errorName(e)}) catch {};
+        return 1;
+    };
+    return 0;
+}
+
+/// One `.weave` file in the working directory: the app the user means. Several,
+/// or none, and we ask instead of guessing.
+fn discoverApp(alloc: std.mem.Allocator) !?[]const u8 {
+    var dir = std.fs.cwd().openDir(".", .{ .iterate = true }) catch return null;
+    defer dir.close();
+
+    var found: ?[]const u8 = null;
+    var count: usize = 0;
+    var it = dir.iterate();
+    while (try it.next()) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".weave")) continue;
+        count += 1;
+        if (count == 1) found = try alloc.dupe(u8, entry.name);
+    }
+    if (count != 1) {
+        if (found) |f| alloc.free(f);
+        if (count > 1) {
+            stderr().print("weave: this directory has {d} .weave files; name the one you want\n", .{count}) catch {};
+        }
+        return null;
+    }
+    return found;
 }
 
 fn cmdCheck(alloc: std.mem.Allocator, a: *Args) !u8 {
@@ -322,38 +516,110 @@ fn cmdAst(alloc: std.mem.Allocator, a: *Args) !u8 {
     return failed;
 }
 
+/// `weave build`: source in, one of three artifacts out.
+///
+///   --format wvbc (default)  pre-compiled bytecode, run by any `weave`
+///   --format html            one self-contained page: engine, app, styles
+///   --format exe             this engine with the app compiled into it
 fn cmdBuild(alloc: std.mem.Allocator, a: *Args) !u8 {
+    if (a.files.items.len != 1) {
+        stderr().print("usage: weave build <file.weave|file.wvbc> [-o out] [--format wvbc|html|exe]\n", .{}) catch {};
+        return 2;
+    }
     const path = a.files.items[0];
-    if (module.isBytecode(path)) {
+    const fmt = a.format orelse inferFormat(a.out) orelse .wvbc;
+
+    if (fmt == .wvbc and module.isBytecode(path)) {
         stderr().print("weave: {s} is already bytecode\n", .{path}) catch {};
         return 2;
     }
+
     const m = module.load(alloc, path, a.opts.color) catch |e| {
         reportLoadError(path, e);
         return 1;
     };
     defer m.deinit();
 
-    var out_buf: std.ArrayList(u8) = std.ArrayList(u8).init(alloc);
+    var out_buf = std.ArrayList(u8).init(alloc);
     defer out_buf.deinit();
-    const out_path: []const u8 = a.out orelse blk: {
-        const stem = if (std.mem.endsWith(u8, path, ".weave")) path[0 .. path.len - 6] else path;
-        try out_buf.writer().print("{s}.wvbc", .{stem});
-        break :blk out_buf.items;
-    };
+    const out_path: []const u8 = a.out orelse try defaultOutPath(fmt, path, &out_buf);
 
-    module.writeBytecode(alloc, m.unit, out_path) catch |e| {
-        stderr().print("weave: cannot write {s} ({s})\n", .{ out_path, @errorName(e) }) catch {};
-        return 1;
-    };
-    const size = std.fs.cwd().statFile(out_path) catch null;
-    stdout().print("weave: wrote {s} ({d} bytes, {d} functions, {d} consts)\n", .{
-        out_path,
-        if (size) |s| s.size else 0,
-        m.unit.funcs.len,
-        m.unit.consts.len,
-    }) catch {};
+    switch (fmt) {
+        .wvbc => {
+            module.writeBytecode(alloc, m.unit, out_path) catch |e| {
+                stderr().print("weave: cannot write {s} ({s})\n", .{ out_path, @errorName(e) }) catch {};
+                return 1;
+            };
+            stdout().print("weave: wrote {s} ({d} bytes, {d} functions, {d} consts)\n", .{
+                out_path,
+                fileSize(out_path) orelse 0,
+                m.unit.funcs.len,
+                m.unit.consts.len,
+            }) catch {};
+            stdout().print("       run it with: weave run {s}\n", .{out_path}) catch {};
+        },
+        .html => {
+            const r = package.writeHtml(alloc, m.unit, m.source_text, out_path) catch |e| {
+                stderr().print("weave: cannot write {s} ({s})\n", .{ out_path, @errorName(e) }) catch {};
+                return 1;
+            };
+            stdout().print("weave: wrote {s} ({d} KB) — app {s}\n", .{ r.path, r.bytes / 1024, m.unit.app_name }) catch {};
+            stdout().print("       engine {d} KB + bytecode {d} KB inline; open the file in a browser\n", .{
+                r.engine_bytes / 1024,
+                r.app_bytes / 1024,
+            }) catch {};
+        },
+        .exe => {
+            const r = package.writeExe(alloc, m.unit, out_path) catch |e| {
+                stderr().print("weave: cannot write {s} ({s})\n", .{ out_path, @errorName(e) }) catch {};
+                return 1;
+            };
+            stdout().print("weave: wrote {s} ({d} KB) — app {s}\n", .{ r.path, r.bytes / 1024, m.unit.app_name }) catch {};
+            stdout().print("       engine {d} KB + app {d} KB; run it with: {s}\n", .{
+                r.engine_bytes / 1024,
+                r.app_bytes / 1024,
+                r.path,
+            }) catch {};
+            if (builtin.os.tag == .macos and !r.resigned) {
+                stdout().print("       note: macOS wants it signed: codesign --force --sign - {s}\n", .{r.path}) catch {};
+            }
+        },
+    }
     return 0;
+}
+
+/// `-o app.html` says what you want as clearly as `--html` does.
+fn inferFormat(out: ?[]const u8) ?package.Format {
+    const o = out orelse return null;
+    if (endsWithIgnoreCase(o, ".html") or endsWithIgnoreCase(o, ".htm")) return .html;
+    if (endsWithIgnoreCase(o, ".wvbc")) return .wvbc;
+    if (endsWithIgnoreCase(o, ".exe")) return .exe;
+    return null;
+}
+
+fn endsWithIgnoreCase(s: []const u8, suffix: []const u8) bool {
+    return s.len >= suffix.len and std.ascii.eqlIgnoreCase(s[s.len - suffix.len ..], suffix);
+}
+
+/// `<stem>` + the format's extension, beside the input file's name.
+fn defaultOutPath(fmt: package.Format, path: []const u8, buf: *std.ArrayList(u8)) ![]const u8 {
+    var stem = std.fs.path.basename(path);
+    for ([_][]const u8{ ".weave", ".wvbc" }) |ext| {
+        if (std.mem.endsWith(u8, stem, ext)) stem = stem[0 .. stem.len - ext.len];
+    }
+    if (stem.len == 0) stem = "app";
+    try buf.writer().print("{s}{s}", .{ stem, fmt.extension() });
+    return buf.items;
+}
+
+fn fileSize(path: []const u8) ?usize {
+    const st = std.fs.cwd().statFile(path) catch return null;
+    return st.size;
+}
+
+fn discardSink(ctx: *anyopaque, bytes: []const u8) session.SendError!void {
+    _ = ctx;
+    _ = bytes;
 }
 
 fn cmdDump(alloc: std.mem.Allocator, a: *Args) !u8 {

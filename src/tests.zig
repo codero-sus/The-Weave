@@ -623,3 +623,410 @@ test "session: `after` arms a timer the session fires on tick" {
     try std.testing.expect(wire.frames.items.len > frames_before);
     try std.testing.expect(std.mem.indexOf(u8, wire.last(), "done: 1") != null);
 }
+
+// --------------------------------------------------------------- engine ----
+//
+// `wasm.zig` is the headless engine a browser page drives: it compiles a whole
+// `.weave` source (or loads `.wvbc`) and speaks the wire protocol over an
+// in-memory frame queue instead of a socket. It ships as `weave-core.wasm`
+// inside every `weave build --html` file, and it is compiled natively here so
+// `zig build test` covers the page transport without a browser in sight.
+
+const host = @import("host.zig");
+const wasm = @import("wasm.zig");
+
+const samples = @import("samples");
+
+/// The shipped sample, verbatim: `weave build examples/todo.weave --html`
+/// embeds exactly these bytes.
+const todo_file_source = samples.todo;
+
+const loggy_source =
+    \\app Loggy:
+    \\    state:
+    \\        n = 0
+    \\    handlers:
+    \\        bump():
+    \\            n += 1
+    \\            log("n is {n}")
+    \\    effects:
+    \\        on_mount:
+    \\            log("mounted")
+    \\    view:
+    \\        text("n={n}")
+    \\        button("go", click: bump())
+    \\
+;
+
+fn contains(hay: []const u8, needle: []const u8) bool {
+    return std.mem.indexOf(u8, hay, needle) != null;
+}
+
+fn anyFrameContains(frames: []const []const u8, needle: []const u8) bool {
+    for (frames) |f| if (contains(f, needle)) return true;
+    return false;
+}
+
+fn jsonOf(a: std.mem.Allocator, text: []const u8) !std.json.Parsed(std.json.Value) {
+    return std.json.parseFromSlice(std.json.Value, a, text, .{});
+}
+
+fn strOf(v: std.json.Value) ?[]const u8 {
+    return switch (v) {
+        .string => |s| s,
+        else => null,
+    };
+}
+
+fn strField(o: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    const v = o.get(key) orelse return null;
+    return strOf(v);
+}
+
+fn tagOf(node: std.json.Value) ?[]const u8 {
+    return switch (node) {
+        .object => |o| strField(o, "t"),
+        else => null,
+    };
+}
+
+/// Depth-first search of a wire-protocol node tree for the first node of `tag`.
+fn findNode(node: std.json.Value, tag: []const u8) ?std.json.Value {
+    switch (node) {
+        .object => |o| {
+            if (strField(o, "t")) |t| {
+                if (std.mem.eql(u8, t, tag)) return node;
+            }
+            if (o.get("c")) |c| return findNode(c, tag);
+            return null;
+        },
+        .array => |items| {
+            for (items.items) |child| {
+                if (findNode(child, tag)) |hit| return hit;
+            }
+            return null;
+        },
+        else => return null,
+    }
+}
+
+/// How many nodes of `tag` are in this subtree?
+fn countNodes(node: std.json.Value, tag: []const u8) usize {
+    var n: usize = 0;
+    switch (node) {
+        .object => |o| {
+            if (o.get("t")) |t| {
+                if (std.mem.eql(u8, strOf(t) orelse "", tag)) n += 1;
+            }
+            if (o.get("c")) |c| n += countNodes(c, tag);
+        },
+        .array => |items| {
+            for (items.items) |child| n += countNodes(child, tag);
+        },
+        else => {},
+    }
+    return n;
+}
+
+fn nodeId(node: std.json.Value) !i64 {
+    const v = node.object.get("i") orelse return error.NoId;
+    return switch (v) {
+        .integer => |n| n,
+        .float => |f| @intFromFloat(f),
+        else => error.NoId,
+    };
+}
+
+/// Everything the engine has queued since the last call. The slices live in the
+/// engine arena, so they stay valid until `destroy()`.
+fn drain(a: std.mem.Allocator, e: *wasm.Engine) !std.ArrayList([]const u8) {
+    var out = std.ArrayList([]const u8).init(a);
+    errdefer out.deinit();
+    while (e.nextFrame()) |f| try out.append(f);
+    return out;
+}
+
+test "engine: source app boots and mounts exactly as the page sees it" {
+    value.useAllocator(std.testing.allocator);
+    const a = std.testing.allocator;
+
+    var diags: []const u8 = "";
+    defer if (diags.len > 0) a.free(diags);
+
+    const e = try wasm.Engine.create(a, "todo.weave", todo_file_source, .source, &diags);
+    defer e.destroy();
+
+    try std.testing.expectEqualStrings("TodoApp", e.appName());
+    try std.testing.expectEqual(@as(usize, 0), diags.len);
+
+    try e.start();
+    var frames = try drain(a, e);
+    defer frames.deinit();
+    try std.testing.expectEqual(@as(usize, 2), frames.items.len);
+
+    var hello = try jsonOf(a, frames.items[0]);
+    defer hello.deinit();
+    try std.testing.expectEqualStrings("hello", strField(hello.value.object, "t").?);
+    try std.testing.expectEqualStrings("TodoApp", strField(hello.value.object, "app").?);
+
+    var mount = try jsonOf(a, frames.items[1]);
+    defer mount.deinit();
+    try std.testing.expectEqualStrings("mount", strField(mount.value.object, "t").?);
+    const root = mount.value.object.get("root") orelse return error.NoRoot;
+    try std.testing.expectEqualStrings("stack", tagOf(root).?);
+
+    // The bound input is there, wired to `new_task` and listening for Enter, and
+    // the two seeded tasks rendered as two cards.
+    try std.testing.expectEqual(@as(usize, 2), countNodes(root, "card"));
+    try std.testing.expectEqual(@as(usize, 2), countNodes(root, "button"));
+    const input = findNode(root, "input") orelse return error.NoInput;
+    try std.testing.expectEqualStrings("new_task", strField(input.object, "b").?);
+    const events = input.object.get("e") orelse return error.NoEvents;
+    var has_enter = false;
+    for (events.array.items) |ev| {
+        if (std.mem.eql(u8, strOf(ev) orelse "", "enter")) has_enter = true;
+    }
+    try std.testing.expect(has_enter);
+}
+
+test "engine: typing, Enter and click all come back as patches" {
+    value.useAllocator(std.testing.allocator);
+    const a = std.testing.allocator;
+
+    var diags: []const u8 = "";
+    defer if (diags.len > 0) a.free(diags);
+    const e = try wasm.Engine.create(a, "todo.weave", todo_file_source, .source, &diags);
+    defer e.destroy();
+    try e.start();
+
+    var frames = try drain(a, e);
+    defer frames.deinit();
+    var mount = try jsonOf(a, frames.items[1]);
+    defer mount.deinit();
+    const input_id = try nodeId(findNode(mount.value.object.get("root").?, "input").?);
+
+    var msg: [256]u8 = undefined;
+
+    // Typing into a bound input echoes the value straight back.
+    const typed = try std.fmt.bufPrint(
+        &msg,
+        "{{\"t\":\"input\",\"id\":{d},\"value\":\"Ship the prototype\"}}",
+        .{input_id},
+    );
+    try e.dispatch(typed);
+    frames = try drainInto(a, e, frames);
+    try std.testing.expect(anyFrameContains(frames.items, "\"value\":\"Ship the prototype\""));
+
+    // Enter runs `on_enter`, which appends to `tasks` and clears the input.
+    const enter = try std.fmt.bufPrint(
+        &msg,
+        "{{\"t\":\"event\",\"id\":{d},\"name\":\"enter\",\"args\":[]}}",
+        .{input_id},
+    );
+    try e.dispatch(enter);
+    frames = try drainInto(a, e, frames);
+    try std.testing.expect(anyFrameContains(frames.items, "\"o\":\"i\"")); // a card was inserted
+    try std.testing.expect(anyFrameContains(frames.items, "\"value\":\"\"")); // and the input cleared
+
+    // The freshly rendered Done button closes over its own task.
+    var button_id: ?i64 = null;
+    for (frames.items) |f| {
+        var p = try jsonOf(a, f);
+        defer p.deinit();
+        const ops = p.value.object.get("ops") orelse continue;
+        for (ops.array.items) |op| {
+            const n = op.object.get("n") orelse continue;
+            if (findNode(n, "button")) |btn| {
+                button_id = try nodeId(btn);
+                break;
+            }
+        }
+        if (button_id != null) break;
+    }
+    const click = try std.fmt.bufPrint(
+        &msg,
+        "{{\"t\":\"event\",\"id\":{d},\"name\":\"click\",\"args\":[]}}",
+        .{button_id orelse return error.NoButton},
+    );
+    try e.dispatch(click);
+    frames = try drainInto(a, e, frames);
+    try std.testing.expect(anyFrameContains(frames.items, "\"o\":\"r\"")); // the card went away
+}
+
+fn drainInto(a: std.mem.Allocator, e: *wasm.Engine, into: std.ArrayList([]const u8)) !std.ArrayList([]const u8) {
+    var out = into;
+    while (e.nextFrame()) |f| try out.append(f);
+    _ = a;
+    return out;
+}
+
+test "engine: bytecode loads, bad input reports, nothing crashes" {
+    value.useAllocator(std.testing.allocator);
+    const a = std.testing.allocator;
+
+    var d1: []const u8 = "";
+    const garbage = wasm.Engine.create(a, "x.wvbc", "not bytecode at all", .bytecode, &d1);
+    try std.testing.expectError(error.BadBytecode, garbage);
+    try std.testing.expect(contains(d1, "not a .wvbc file"));
+    a.free(d1);
+
+    // A source that does not parse comes back as text, not as a crash.
+    var d2: []const u8 = "";
+    const broken =
+        \\app Broken:
+        \\    view:
+        \\        text("unterminated
+        \\
+    ;
+    const bad_src = wasm.Engine.create(a, "broken.weave", broken, .source, &d2);
+    try std.testing.expectError(error.Diagnostics, bad_src);
+    // "[E001]: unterminated string literal --> broken.weave:3:14"
+    try std.testing.expect(contains(d2, "E001"));
+    try std.testing.expect(contains(d2, "unterminated"));
+    try std.testing.expect(contains(d2, "broken.weave"));
+    a.free(d2);
+
+    // A real round trip: compile the sample, serialise it, boot from the bytes.
+    var d3: []const u8 = "";
+    defer if (d3.len > 0) a.free(d3);
+    const e = try wasm.Engine.create(a, "todo.weave", todo_file_source, .source, &d3);
+    defer e.destroy();
+
+    var enc = bytecode.Encoder.init(a);
+    defer enc.deinit();
+    const blob = try enc.encodeUnit(e.unit);
+    defer a.free(blob);
+
+    var d4: []const u8 = "";
+    defer if (d4.len > 0) a.free(d4);
+    const e2 = try wasm.Engine.create(a, "todo.wvbc", blob, .bytecode, &d4);
+    defer e2.destroy();
+    try std.testing.expectEqualStrings("TodoApp", e2.appName());
+    try e2.start();
+    var frames = try drain(a, e2);
+    defer frames.deinit();
+    try std.testing.expect(anyFrameContains(frames.items, "\"t\":\"mount\""));
+}
+
+/// A handler that raises must not take the page down with it.
+const boom_source =
+    \\app Boom:
+    \\    state:
+    \\        items = ["a"]
+    \\        clicks = 0
+    \\    handlers:
+    \\        go():
+    \\            clicks += 1
+    \\        explode():
+    \\            clicks += items[99].len()
+    \\    view:
+    \\        text("clicks={clicks}")
+    \\        button("ok", click: go())
+    \\        button("boom", click: explode())
+    \\
+;
+
+test "engine: a runtime error becomes an error frame and the page lives on" {
+    value.useAllocator(std.testing.allocator);
+    const a = std.testing.allocator;
+
+    var diags: []const u8 = "";
+    defer if (diags.len > 0) a.free(diags);
+    const e = try wasm.Engine.create(a, "boom.weave", boom_source, .source, &diags);
+    defer e.destroy();
+    try e.start();
+
+    var frames = try drain(a, e);
+    defer frames.deinit();
+    var mount = try jsonOf(a, frames.items[1]);
+    defer mount.deinit();
+    const root = mount.value.object.get("root").?;
+
+    // Two buttons: "ok" and "boom", in source order.
+    var ids = std.ArrayList(i64).init(a);
+    defer ids.deinit();
+    try collectNodes(root, "button", &ids);
+    try std.testing.expectEqual(@as(usize, 2), ids.items.len);
+
+    var msg: [128]u8 = undefined;
+    const boom = try std.fmt.bufPrint(
+        &msg,
+        "{{\"t\":\"event\",\"id\":{d},\"name\":\"click\",\"args\":[]}}",
+        .{ids.items[1]},
+    );
+    try e.dispatch(boom);
+    frames = try drainInto(a, e, frames);
+    try std.testing.expect(anyFrameContains(frames.items, "\"t\":\"error\""));
+
+    // The session survived: the next event still renders a patch.
+    const ok = try std.fmt.bufPrint(
+        &msg,
+        "{{\"t\":\"event\",\"id\":{d},\"name\":\"click\",\"args\":[]}}",
+        .{ids.items[0]},
+    );
+    frames.clearRetainingCapacity();
+    try e.dispatch(ok);
+    frames = try drainInto(a, e, frames);
+    try std.testing.expect(anyFrameContains(frames.items, "\"t\":\"patch\""));
+}
+
+/// Every node id of `tag`, in document order.
+fn collectNodes(node: std.json.Value, tag: []const u8, out: *std.ArrayList(i64)) !void {
+    switch (node) {
+        .object => |o| {
+            if (o.get("t")) |t| {
+                if (std.mem.eql(u8, strOf(t) orelse "", tag)) {
+                    if (o.get("i")) |i| {
+                        switch (i) {
+                            .integer => |n| try out.append(n),
+                            else => {},
+                        }
+                    }
+                }
+            }
+            if (o.get("c")) |c| try collectNodes(c, tag, out);
+        },
+        .array => |items| {
+            for (items.items) |child| try collectNodes(child, tag, out);
+        },
+        else => {},
+    }
+}
+
+test "engine: effects and log() reach the page, and timers tick" {
+    value.useAllocator(std.testing.allocator);
+    const a = std.testing.allocator;
+
+    var diags: []const u8 = "";
+    defer if (diags.len > 0) a.free(diags);
+    const e = try wasm.Engine.create(a, "loggy.weave", loggy_source, .source, &diags);
+    defer e.destroy();
+    try e.start();
+
+    var frames = try drain(a, e);
+    defer frames.deinit();
+    // on_mount ran while the page was still booting.
+    try std.testing.expect(contains(host.takeLog(), "mounted"));
+
+    var mount = try jsonOf(a, frames.items[1]);
+    defer mount.deinit();
+    const btn_id = try nodeId(findNode(mount.value.object.get("root").?, "button").?);
+
+    var msg: [128]u8 = undefined;
+    const click = try std.fmt.bufPrint(&msg, "{{\"t\":\"event\",\"id\":{d},\"name\":\"click\",\"args\":[]}}", .{btn_id});
+    try e.dispatch(click);
+    frames = try drainInto(a, e, frames);
+    try std.testing.expect(anyFrameContains(frames.items, "\"t\":\"patch\""));
+    try std.testing.expect(contains(host.takeLog(), "n is 1"));
+
+    // A page also keeps the connection warm and drives the clock: a ping is
+    // answered, and a tick with nothing due sends no frame at all.
+    try e.dispatch("{\"t\":\"ping\"}");
+    frames = try drainInto(a, e, frames);
+    try std.testing.expect(anyFrameContains(frames.items, "\"t\":\"pong\""));
+
+    const before = frames.items.len;
+    try e.tick(1_700_000_000_000);
+    frames = try drainInto(a, e, frames);
+    try std.testing.expectEqual(before, frames.items.len);
+}
