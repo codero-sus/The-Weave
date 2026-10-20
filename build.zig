@@ -17,6 +17,7 @@ pub fn build(b: *std.Build) void {
 
     // Browser assets live in assets/ and reach the binary through @embedFile.
     const assets = b.addModule("assets", .{ .root_source_file = b.path("assets/embed.zig") });
+    const samples = b.addModule("samples", .{ .root_source_file = b.path("examples/embed.zig") });
     const options = b.addOptions();
     options.addOption([]const u8, "version", version);
 
@@ -37,6 +38,33 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the weave CLI");
     run_step.dependOn(&run_cmd.step);
 
+    // ---- in-page engine (WebAssembly) ------------------------------------
+    // `weave build --html` embeds this blob so a single .html file runs a whole
+    // app with no server. The compiled engine is checked in at
+    // assets/weave-core.wasm: @embedFile has to resolve before the executable
+    // compiles, and it must not move with --prefix. `zig build wasm` rebuilds
+    // it, and CI fails if the committed copy is stale.
+    const core = b.addExecutable(.{
+        .name = "weave-core",
+        .root_source_file = b.path("src/wasm.zig"),
+        .target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding }),
+        .optimize = .ReleaseSmall,
+    });
+    // Export every `export fn`, not just the entry point the linker wants.
+    core.rdynamic = true;
+
+    const copier = b.addExecutable(.{
+        .name = "copyfile",
+        .root_source_file = b.path("tools/copyfile.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    });
+    const refresh = b.addRunArtifact(copier);
+    refresh.addFileArg(core.getEmittedBin());
+    refresh.addArg(b.pathFromRoot("assets/weave-core.wasm"));
+    const wasm_step = b.step("wasm", "Rebuild assets/weave-core.wasm (the in-page engine)");
+    wasm_step.dependOn(&refresh.step);
+
     // ---- unit tests ------------------------------------------------------
     // Tests always build Debug: runtime safety checks and leak detection are
     // the whole point of running them.
@@ -46,6 +74,7 @@ pub fn build(b: *std.Build) void {
         .optimize = .Debug,
     });
     unit_tests.root_module.addOptions("build_options", options);
+    unit_tests.root_module.addImport("samples", samples);
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);

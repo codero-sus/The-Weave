@@ -5,6 +5,11 @@ no generated code. One binary contains the compiler, the VM, the reactive store,
 diff engine, the HTTP server, the WebSocket server and the browser client (embedded
 with `@embedFile`).
 
+The engine half of that — lexer through diff, everything except the sockets and the CLI —
+is also compiled to WebAssembly (`src/wasm.zig`), so the same VM can run inside an
+exported `.html` page with no server anywhere. `src/host.zig` is the only module that
+knows which of the two worlds it is in.
+
 ```
 .weave source ──► lexer ──► parser ──► AST ──► compiler ──► bytecode (.wvbc)
                                                                 │
@@ -35,11 +40,16 @@ Source modules and what they own:
 | `src/diff.zig`       | Old vs new tree → minimal patch ops                                |
 | `src/proto.zig`      | JSON wire format for frames, nodes and patch ops                   |
 | `src/session.zig`    | One app instance per connection: start, dispatch, tick, settle     |
+| `src/host.zig`       | Clock and log, pruned at comptime for wasm (no `std.posix` there)  |
 | `src/ws.zig`         | Hand-rolled WebSocket: handshake, framing, masking, fragmentation  |
 | `src/module.zig`     | Load a `.weave` or `.wvbc` file into a `CodeUnit`, hot-reload mtime |
 | `src/server.zig`     | HTTP routing, static assets, upgrade, thread-per-connection        |
 | `src/cli.zig`        | Argument parsing, commands, scaffold, help                         |
-| `assets/`            | `index.html`, `client.js`, `client.css`, embedded via `embed.zig`  |
+| `src/wasm.zig`       | Headless engine API: one app, a queue of JSON frames in and out    |
+| `src/html.zig`       | Renders the single-file page: engine + bytecode + styles + client  |
+| `src/package.zig`    | Build output formats, the executable payload trailer, embedded apps |
+| `assets/`            | `index.html`, `client.js`, `client.css`, `weave-core.wasm`, embedded via `embed.zig` |
+| `tools/`             | `copyfile.zig` (`zig build wasm`), `check-html.mjs` (boots an exported page in Node) |
 
 ---
 
@@ -293,12 +303,105 @@ grow shrink`); `align` becomes `align-items` on containers and `text-align` on t
 `bind` installs an input/change listener; while the field has focus the client ignores
 echoed value patches so the caret does not jump. Disconnects reconnect with backoff,
 a 25 s ping keeps proxies honest, and a runtime error frame raises an overlay.
-`window.weave` exposes the socket and stats for debugging.
+`window.weave` exposes the transport and stats for debugging.
 
-## 12. Testing
+The renderer never talks to a socket directly. It talks to a `transport` object with
+three members — `send(json)`, `close()` and an incoming-frame callback — and picks one at
+startup:
+
+* `connectSocket()` opens `ws://…/ws`, which is what `weave run` serves;
+* `connectLocal()` uses `window.__WEAVE_LOCAL__`, the in-page engine, and ticks it every
+  50 ms with `Date.now()` so `after <ms>:` timers fire without a socket poll.
+
+Both end at the same `handleMessage(data)`, so a frame is a frame however it arrived.
+`drainLocal()` is the local loop's other half: it pulls frames until the queue is empty,
+forwards `log()` output to the console as `[weave] …`, and warns if the engine dropped log
+bytes because the page stopped reading.
+
+## 12. The in-page engine
+
+`src/wasm.zig` is a sibling root source file (not imported by `main.zig`), compiled twice:
+
+```sh
+zig build wasm      # -> assets/weave-core.wasm, wasm32-freestanding, ReleaseSmall
+zig build test      # -> the same file, natively, under the leak-checking allocator
+```
+
+It exposes an `Engine` — one app, one arena, a queue of JSON frames — and a dozen
+`export fn`s over the top of it, because a page hosts a single app:
+
+```
+weave_alloc(len) -> ptr          scratch buffer for whatever the page hands in
+weave_load(ptr, len, kind)       kind 0 = .weave source, 1 = .wvbc; 0 ok, 1 diagnostics,
+                                 2 bad bytecode, 3 out of memory
+weave_start()                    run signal initialisers, queue hello + mount
+weave_dispatch(ptr, len)         one client message: event, input or ping
+weave_tick(now_ms)               set the clock, fire due `after` timers
+weave_next_frame() -> i64        oldest queued frame as (ptr << 32) | len, 0 when empty
+weave_diagnostics() -> i64       compile text, or the last runtime error
+weave_app_name() -> i64          from the `app Name:` declaration
+weave_take_log() -> i64          `log()` output since the last read
+weave_log_dropped() -> u32       log bytes lost because the page stopped reading
+weave_reset()                    tear the app down
+```
+
+Three details that are easy to get wrong, and are therefore written down:
+
+* **Only `build-exe -target wasm32-freestanding -rdynamic` works.** `-dynamic` on a
+  library and `--no-entry` both fail on this target. The entry point is exported only for
+  wasm (`@export(wasmEntry, …)` inside a `comptime` arch check), because a native test
+  binary already has a `_start`.
+* **Nothing in the wasm cone may touch `std.time`, `std.io.getStdErr` or `std.debug.print`.**
+  Each pulls in `std.posix`, which does not exist on `wasm32-freestanding`. `src/host.zig`
+  owns those three and prunes them at comptime; the result is a wasm module with **no
+  imports at all**, only exports and its own memory.
+* **The value allocator and the engine arena are different allocators.** `value.alloc` is
+  process-wide and owns every refcounted box; a session or engine may be handed an arena
+  instead. Anything that a `Value` can outlive — closure boxes and their capture slices,
+  and the scratch strings from `displayString` — must be allocated *and* freed through
+  `value.alloc`, or an arena-backed engine frees memory it never owned. The native engine
+  tests exist mainly to keep that rule true.
+
+Diagnostics are allocated from the engine's parent, not its arena: on a compile error the
+arena is torn down before the caller reads the text, and a page that loads a broken app
+must still be able to show why.
+
+The build is byte-for-byte reproducible (same bytes from `zig build wasm` and from a bare
+`zig build-exe`), which is what makes the committed blob checkable: CI runs `zig build wasm`
+and fails if `assets/weave-core.wasm` differs from what is in git.
+
+## 13. Exporting
+
+`src/package.zig` owns the three output formats and `src/html.zig` renders the page.
+
+* **`.wvbc`** — `bytecode.encodeUnit`, unchanged from what `weave run` loads.
+* **`.html`** — `html.render` writes one document: inlined `client.css`, the mount point,
+  the engine and the bytecode as base64 in `<script type="application/base64">` blocks
+  (never fetched, so `file://` works), the readable source in
+  `<script type="text/weave">`, a boot script that defines `window.__WEAVE_LOCAL__`, and
+  inlined `client.js`. Text goes through `escapeHtml`; script bodies through
+  `escapeScriptText`, which breaks up `</script` and `<!--` so a source file containing
+  either cannot end the block early.
+* **executable** — copy `std.fs.selfExePath()` to the output, strip any payload already
+  there, append the `.wvbc` bytes and a 16-byte trailer: the magic `WVEXAPP1` and the
+  payload length as a little-endian `u64`. At startup `isPackaged()` reads its own last
+  16 bytes; `embeddedApp()` returns the bytecode, which `module.fromBytecode` decodes into
+  a module the server can run with reload disabled. On macOS the copy is re-signed ad-hoc
+  (`codesign --force --sign -`) on a best-effort basis, since appending bytes invalidates
+  any existing signature.
+
+`weave run --selftest` and a packaged binary's `--selftest` share one path: load the
+module, create a session with a sink that discards frames, start it, and report the app
+name, signal count, function count and rendered node count. It is how CI proves an
+artifact runs without opening a socket.
+
+## 14. Testing
 
 * `zig build test` — unit tests over the lexer, parser, compiler, VM, reactivity, diff
-  and the wire format, each leak-checked by `std.testing.allocator`.
+  and the wire format, each leak-checked by `std.testing.allocator`, plus the in-page
+  engine driven natively: the shipped `examples/todo.weave` boots, mounts, takes typed
+  input, runs `on_enter`, closes over a loop variable, survives a runtime error and drains
+  `log()` output — the whole page transport, without a browser.
 * `zig build itest` — boots the real server on an ephemeral port and drives it with a
   real WebSocket client over a real socket: static assets, handshake, mount tree shape,
   input binding, event dispatch, patch shape, ping/pong, a second independent session,
@@ -306,6 +409,11 @@ a 25 s ping keeps proxies honest, and a runtime error frame raises an overlay.
 * `zig build examples` — compiles every `examples/*.weave`, mounts a session, dispatches
   every event and input on every interactive node, advances the clock 60 s and asserts
   the app settled. This is the regression net for the language surface.
-* CI additionally cross-compiles all six release targets on every pull request and
-  pre-compiles the examples to `.wvbc`, loading each artifact back to prove the format
-  round-trips. See `.github/workflows/`.
+* `node tools/check-html.mjs page.html` — boots an exported page in Node: decode the
+  base64 blocks, instantiate the WebAssembly, start the app, ping it, tick it, and
+  re-compile the embedded source. Exit 0 means the file opens and runs.
+* CI additionally cross-compiles all six release targets on every pull request,
+  pre-compiles the examples to `.wvbc` and exports each as a `.html` page, loads every
+  artifact back, boots every page, packages an executable and runs its `--selftest`, and
+  checks that the committed engine blob matches a fresh `zig build wasm`.
+  See `.github/workflows/`.
