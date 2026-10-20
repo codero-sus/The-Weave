@@ -8,12 +8,22 @@ name: Release
 on:
   push:
     tags: ["v*.*.*"]
+  # Self-test: a change to this workflow runs the full packaging matrix in dry-run
+  # mode, so a broken release pipeline is caught before anyone tags a commit.
+  # `workflow_dispatch` only fires from the default branch, hence this trigger.
+  pull_request:
+    paths: [".github/workflows/release.yml"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to publish, e.g. v0.1.0"
-        required: true
+        description: "Existing tag to build from, e.g. v0.1.0 (or a branch when dry-running)"
+        required: false
         type: string
+      dry_run:
+        description: "Build and package everything, but do not publish a release"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -29,6 +39,7 @@ jobs:
     outputs:
       tag: ${{ steps.v.outputs.tag }}
       version: ${{ steps.v.outputs.version }}
+      dry_run: ${{ steps.v.outputs.dry_run }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,21 +49,29 @@ jobs:
       - id: v
         env:
           INPUT_TAG: ${{ inputs.tag }}
+          DRY_INPUT: ${{ inputs.dry_run }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
+          DRY="$DRY_INPUT"
+          # A pull request may only self-test the pipeline; it must never publish.
+          if [ "$EVENT" = "pull_request" ]; then DRY=true; fi
+          echo "dry_run=$DRY" >> "$GITHUB_OUTPUT"
+
           TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
-          if [ -z "$TAG" ]; then
-            echo "::error::no tag given"
-            exit 1
-          fi
-          if ! git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
+          if git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
+            VERSION="${TAG#v}"
+          elif [ "$DRY" = "true" ]; then
+            # Dry runs may point at a branch or a merge ref: version from the commit.
+            VERSION="0.0.0-$(git rev-parse --short HEAD)"
+            echo "No tag $TAG; packaging a dry run as $VERSION"
+          else
             echo "::error::tag $TAG does not exist in this repository"
             exit 1
           fi
-          VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Releasing weave $VERSION from $TAG"
+          echo "Releasing weave $VERSION from $TAG (dry run: $DRY)"
 
   # ------------------------------------------------------- pre-compiled ----
   # One native build of the compiler turns every example into a standalone
@@ -194,6 +213,7 @@ jobs:
   publish:
     name: publish GitHub Release
     runs-on: ubuntu-latest
+    if: ${{ needs.version.outputs.dry_run != 'true' }}
     needs: [version, package]
     steps:
       - uses: actions/checkout@v4
@@ -284,3 +304,31 @@ jobs:
               --title "weave $VERSION" \
               --notes-file ../notes.md
           fi
+
+  dry-run-summary:
+    name: dry run summary
+    runs-on: ubuntu-latest
+    if: ${{ needs.version.outputs.dry_run == 'true' }}
+    needs: [version, package]
+    steps:
+      - name: Collect packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Report what would be published
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum ./*.tar.gz ./*.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          echo
+          echo "Dry run: $(ls ./*.tar.gz ./*.zip | wc -l) asset(s) ready for weave ${{ needs.version.outputs.version }}."
+          echo "Nothing was published. Tag a commit to ship it:"
+          echo "  git tag v0.1.0 && git push origin v0.1.0"
+          for f in ./*.tar.gz ./*.zip; do
+            echo "--- $f"
+            if [[ "$f" == *.zip ]]; then unzip -l "$f" | head -20; else tar -tzf "$f" | head -20; fi
+          done
