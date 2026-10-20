@@ -177,7 +177,17 @@ pub const Parser = struct {
     fn parseApp(self: *Parser) Error!ast.App {
         const kw = self.advance(); // 'app'
         var name: []const u8 = "App";
-        if (self.at(.name)) name = self.advance().text;
+        if (self.at(.name)) {
+            const name_tok = self.advance();
+            name = name_tok.text;
+            if (!self.at(.colon)) {
+                // `app my-app:` lexes as `my` `-` `app` `:`. One precise error here
+                // beats a cascade of "expected 'app' or 'component'" further down.
+                const t = self.cur();
+                self.rep.errHint(diag.Span.merge(name_tok.span, t.span), "app names are identifiers: letters, digits and underscores, so 'my-app' becomes 'MyApp'", "expected ':' after the app name, found {s}", .{describeTok(t)});
+                while (!self.at(.colon) and !self.at(.newline) and !self.at(.eof)) self.i += 1;
+            }
+        }
         _ = self.expect(.colon);
         var app = ast.App{ .name = name, .span = kw.span };
 
