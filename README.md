@@ -163,7 +163,12 @@ artifact back to prove the bytecode format round-trips.
 | Workflow                             | Trigger            | What it does                                                       |
 | ------------------------------------ | ------------------ | ------------------------------------------------------------------ |
 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml)         | push, PR   | Builds Debug + ReleaseSafe, runs unit/integration/example suites, smoke-tests the CLI, pre-compiles the examples to `.wvbc` and verifies they load, then cross-compiles all six release targets |
-| [`.github/workflows/release.yml`](.github/workflows/release.yml) | tag `v*.*.*` or manual dispatch | Cross-compiles the CLI for every target, pre-compiles the bundled examples into each package, archives them with SHA-256 sums and publishes a GitHub Release |
+| [`.github/workflows/release.yml`](.github/workflows/release.yml) | tag `v*.*.*`, manual dispatch, or a PR that touches the workflow | Cross-compiles the CLI for every target, pre-compiles the bundled examples into each package, archives them with SHA-256 sums and publishes a GitHub Release |
+
+The release pipeline self-tests: a pull request that changes `release.yml` (or a
+manual dispatch with `dry_run`) runs the entire packaging matrix and prints the
+archive contents and checksums, but stops short of publishing. A pull request can
+never publish a release.
 
 Release targets: `x86_64-linux-musl` (static), `x86_64-linux-gnu`, `aarch64-linux-gnu`,
 `x86_64-macos`, `aarch64-macos`, `x86_64-windows`. Every package contains the binary,
