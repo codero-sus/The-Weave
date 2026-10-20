@@ -393,7 +393,11 @@ fn cmdNew(alloc: std.mem.Allocator, a: *Args) !u8 {
     } else |_| {}
 
     const stem = std.fs.path.basename(if (std.mem.endsWith(u8, name, ".weave")) name[0 .. name.len - 6] else name);
-    const body = try std.fmt.allocPrint(alloc, scaffold, .{stem});
+    // The file may be called anything (`my-app`, `2048`, `hello.world`), but an
+    // app name has to be an identifier, so derive one from the stem.
+    const app_name = try appNameFromStem(alloc, stem);
+    defer alloc.free(app_name);
+    const body = try std.fmt.allocPrint(alloc, scaffold, .{app_name});
     defer alloc.free(body);
     std.fs.cwd().writeFile(.{ .sub_path = path, .data = body }) catch |e| {
         stderr().print("weave: cannot write {s} ({s})\n", .{ path, @errorName(e) }) catch {};
@@ -401,6 +405,34 @@ fn cmdNew(alloc: std.mem.Allocator, a: *Args) !u8 {
     };
     stdout().print("weave: created {s}\n       run it with: weave {s}\n", .{ path, path }) catch {};
     return 0;
+}
+
+/// `my-app` -> `MyApp`, `2048` -> `App2048`, `hello.world.weave` -> `HelloWorld`.
+/// Separator and punctuation runs start a new capitalised word; anything that is
+/// not alphanumeric is dropped, so the result is always a valid identifier.
+fn appNameFromStem(alloc: std.mem.Allocator, stem: []const u8) ![]u8 {
+    var out = std.ArrayList(u8).init(alloc);
+    errdefer out.deinit();
+
+    var capitalise_next = true;
+    for (stem) |c| {
+        if (!std.ascii.isAlphanumeric(c)) {
+            capitalise_next = true;
+            continue;
+        }
+        if (capitalise_next) {
+            try out.append(std.ascii.toUpper(c));
+            capitalise_next = false;
+        } else {
+            try out.append(c);
+        }
+    }
+    if (out.items.len == 0) {
+        try out.appendSlice("App");
+    } else if (std.ascii.isDigit(out.items[0])) {
+        try out.insertSlice(0, "App");
+    }
+    return out.toOwnedSlice();
 }
 
 fn reportLoadError(path: []const u8, e: anyerror) void {
