@@ -134,7 +134,12 @@ pub fn writeExe(
     // Packaging a packaged binary must not nest payloads: copy the engine only.
     const engine_len: u64 = if (payloadLenAtPath(self_path)) |n| st.size - trailer_len - n else st.size;
 
-    var dst = std.fs.cwd().createFile(out_path, .{ .truncate = true, .mode = 0o755 }) catch
+    // The copy has to come out runnable. Windows has no permission bits at all
+    // (`File.Mode` is `u0` there), so the mode is a comptime branch, not a
+    // literal: `0o755` does not even type-check for a Windows target.
+    const out_mode: std.fs.File.Mode = if (builtin.target.os.tag == .windows) 0 else 0o755;
+
+    var dst = std.fs.cwd().createFile(out_path, .{ .truncate = true, .mode = out_mode }) catch
         return error.WriteFailed;
     defer dst.close();
 
