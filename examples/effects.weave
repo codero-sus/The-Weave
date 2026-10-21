@@ -1,0 +1,52 @@
+# Effects and timers: `on_mount`, `on <expr>`, and `after <ms>`.
+
+app Effects:
+    state:
+        ticks = 0
+        status = "idle"
+        running = false
+        log_lines = []
+
+    computed:
+        summary = "{ticks} ticks while {status}"
+
+    effects:
+        on_mount:
+            log_lines.append("mounted")
+
+        on ticks:
+            log_lines.append("ticks -> {ticks}")
+
+    handlers:
+        start():
+            running = true
+            status = "running"
+            after 250:
+                ticks += 1
+                if ticks < 5:
+                    start()
+                else:
+                    running = false
+                    status = "finished"
+
+        clear():
+            log_lines = []
+
+    view:
+        stack(padding: 24, gap: 12):
+            heading("Effects", font: 28, bold: true)
+            text(summary)
+
+            row(gap: 8):
+                button("start", click: start())
+                button("clear log", click: clear())
+
+            divider()
+
+            for line in log_lines:
+                code(line)
+
+            if running:
+                badge("running")
+            else:
+                badge("stopped")

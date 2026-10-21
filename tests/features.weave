@@ -1,0 +1,214 @@
+# Language fixture: every construct the compiler claims to support, in one file.
+#
+#   weave check tests/features.weave      -> must pass with no errors
+#   weave run   tests/features.weave      -> must serve and settle
+#
+# CI runs `weave check` over tests/*.weave and examples/*.weave, so a regression in
+# the lexer, parser, compiler or view builder shows up here before it ships.
+
+component Badge(label, tone = "neutral", on_tap = null):
+    row(gap: 6, align: center):
+        badge(label, tone: tone)
+        if on_tap:
+            button("tap", click: on_tap())
+
+component Stat(label, value):
+    card(shadow: sm, padding: 12, gap: 4):
+        text(label, font: 12, color: "#6b7280")
+        text("{value}", font: 22, bold: true)
+
+app Features:
+    # ---- state -------------------------------------------------------------
+    state:
+        counter = 0
+        ratio = 1.5
+        label = "weave"
+        flag = true
+        nothing = nil
+        items = ["alpha", "beta", "gamma"]
+        lookup = { "one": 1, "two": 2 }
+        nested = [{ "name": "a", "n": 1 }, { "name": "b", "n": 2 }]
+
+    # ---- derived signals ---------------------------------------------------
+    computed:
+        doubled = counter * 2
+        summary = "{items.len()} items, doubled={doubled}"
+        # total: `first` is nil on an empty list, slices clamp instead of failing
+        first = items.first()
+        rest = items[1:]
+        window = items[0:2]
+        upper_label = label.upper()
+        joined = "-".join(items)
+        parity = "even" if counter % 2 == 0 else "odd"
+        total = sum([items.len(), len(nested), lookup.len()])
+        biggest = max(1, 2, 3)
+        smallest = min([4, 5, 6])
+        has_alpha = "alpha" in items
+        is_empty = not items
+        ratio_int = int(ratio)
+        ratio_floor = ratio // 1
+        powered = counter ** 2
+        mapped = lookup["one"] + lookup.get("two", 0)
+        from_nested = nested[0]["name"]
+
+    theme:
+        bg = "#0f1115" if flag else "#f7f7f9"
+        fg = "#eceef4" if flag else "#14161a"
+        accent = "#8b8cff"
+
+    styles:
+        page = { "padding": 24, "gap": 12 }
+        title = { "font": 28, "bold": true }
+
+    # ---- logic -------------------------------------------------------------
+    handlers:
+        bump(by):
+            counter += by
+
+        reset():
+            counter = 0
+            items.clear()
+            items.extend(["alpha", "beta", "gamma"])
+
+        exercise_everything():
+            # augmented assignment, all four forms
+            counter += 1
+            counter -= 1
+            counter *= 2
+            counter /= 2
+
+            # list and map mutation must mark the owning signal dirty
+            items.append("delta")
+            items.insert(0, "zero")
+            items.remove("zero")
+            items.pop()
+            items.extend(["epsilon"])
+            lookup["three"] = 3
+            lookup.put("four", 4)
+            lookup.delete("four")
+
+            # branching
+            if counter > 10 and items.len() > 0:
+                items.pop()
+            elif counter > 5:
+                items.append("mid")
+            else:
+                pass
+
+            # iteration with an index, plus break / continue
+            for i, x in items:
+                if x == nil:
+                    break
+                elif x == "skip":
+                    continue
+                counter += i
+
+            for k, v in lookup:
+                counter += v
+
+            for ch in label:
+                counter += len(ch)
+
+            for n in range(3):
+                counter += n
+
+            # slices, membership, comparisons
+            if items[0:2].len() == 2 and "alpha" in items and not is_empty:
+                counter += 1
+
+            # strings: escapes, interpolation of arbitrary expressions
+            label = "brace \{ literal \} and {{double}} and {1 + 1}"
+
+            # timers: a body may nest statements and arm another timer
+            after 250:
+                counter += 1
+                if counter > 100:
+                    counter = 0
+                after 500:
+                    flag = not flag
+
+            return counter
+
+        # A handler may shadow a builtin name; the declaration wins.
+        clear():
+            items.clear()
+
+        sort_items():
+            items.sort()
+
+        # Deliberate runtime error: examples_check dispatches this handler, and the
+        # session must report an `error` frame and keep serving rather than die.
+        boom():
+            counter += items[999].len()
+
+    effects:
+        on_mount:
+            log("features mounted with {items.len()} items")
+
+        on counter:
+            log("counter is {counter} ({parity})")
+
+        on items:
+            log("items changed: {summary}")
+
+    # ---- view --------------------------------------------------------------
+    view:
+        stack(padding: styles.page["padding"], gap: styles.page["gap"],
+              align: center, bg: theme.bg, color: theme.fg):
+
+            heading("Features", font: styles.title["font"], bold: styles.title["bold"])
+            text(summary, color: theme.fg)
+            text("upper: {upper_label} joined: {joined} parity: {parity}")
+
+            row(gap: 12):
+                Stat("counter", counter)
+                Stat("doubled", doubled)
+                Stat("total", total)
+
+            # component with a callable prop and a defaulted prop
+            Badge(label: "accent", tone: "accent", on_tap: bump)
+            Badge("neutral")
+
+            # keyed loop: identity survives reordering and removal
+            for item in items key item:
+                card(shadow: sm, padding: 8):
+                    text(item)
+                    button("remove", click: items.remove(item))
+
+            # positional loop variable pair
+            for i, entry in nested key entry["name"]:
+                row(gap: 6):
+                    badge("#{i}")
+                    text("{entry['name']} = {entry['n']}")
+
+            # conditionals in the view
+            if counter > 5:
+                badge("high", tone: "danger")
+            elif counter > 0:
+                badge("low", tone: "success")
+            else:
+                badge("empty")
+
+            # two-way binding plus an inline block handler
+            input(bind: label, placeholder: "edit the label", on_enter: {
+                items.append(label)
+                label = ""
+                counter += 1
+            })
+
+            row(gap: 8, wrap: true):
+                button("+1", click: bump(1))
+                button("-1", click: bump(-1))
+                button("everything", click: exercise_everything())
+                button("clear", click: clear())
+                button("sort", click: sort_items())
+                button("reset", click: { reset() })
+                button("boom", click: boom())
+
+            divider()
+            code("weave check tests/features.weave")
+            scroll(height: 120):
+                for item in items key item:
+                    text(item, font: 12)
+            spacer(8)
+            link("docs", href: "/docs/language.md")
