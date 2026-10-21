@@ -233,20 +233,32 @@ pub const Encoder = struct {
         return id;
     }
 
+    // Fixed width, little-endian, no padding. A `.wvbc` file has to mean the
+    // same thing on every machine that reads it, so nothing here may depend on
+    // the host: `std.mem.toBytes` writes native-endian bytes, which happens to
+    // be right on x86 and ARM and silently wrong anywhere else.
     fn u8v(self: *Encoder, v: u8) !void {
         try self.out.append(v);
     }
     fn u32v(self: *Encoder, v: u32) !void {
-        try self.out.appendSlice(&std.mem.toBytes(v));
+        var b: [4]u8 = undefined;
+        std.mem.writeInt(u32, &b, v, .little);
+        try self.out.appendSlice(&b);
     }
     fn i32v(self: *Encoder, v: i32) !void {
-        try self.out.appendSlice(&std.mem.toBytes(v));
+        var b: [4]u8 = undefined;
+        std.mem.writeInt(i32, &b, v, .little);
+        try self.out.appendSlice(&b);
     }
     fn i64v(self: *Encoder, v: i64) !void {
-        try self.out.appendSlice(&std.mem.toBytes(v));
+        var b: [8]u8 = undefined;
+        std.mem.writeInt(i64, &b, v, .little);
+        try self.out.appendSlice(&b);
     }
     fn f64v(self: *Encoder, v: f64) !void {
-        try self.out.appendSlice(&std.mem.toBytes(@as(u64, @bitCast(v))));
+        var b: [8]u8 = undefined;
+        std.mem.writeInt(u64, &b, @bitCast(v), .little);
+        try self.out.appendSlice(&b);
     }
     fn strv(self: *Encoder, s: []const u8) !void {
         try self.u32v(try self.strId(s));
@@ -383,28 +395,28 @@ pub const Decoder = struct {
 
     fn u32v(self: *Decoder) DecodeError!u32 {
         try self.need(4);
-        const v = std.mem.bytesToValue(u32, self.buf[self.pos..][0..4]);
+        const v = std.mem.readInt(u32, self.buf[self.pos..][0..4], .little);
         self.pos += 4;
         return v;
     }
 
     fn i32v(self: *Decoder) DecodeError!i32 {
         try self.need(4);
-        const v = std.mem.bytesToValue(i32, self.buf[self.pos..][0..4]);
+        const v = std.mem.readInt(i32, self.buf[self.pos..][0..4], .little);
         self.pos += 4;
         return v;
     }
 
     fn i64v(self: *Decoder) DecodeError!i64 {
         try self.need(8);
-        const v = std.mem.bytesToValue(i64, self.buf[self.pos..][0..8]);
+        const v = std.mem.readInt(i64, self.buf[self.pos..][0..8], .little);
         self.pos += 8;
         return v;
     }
 
     fn f64v(self: *Decoder) DecodeError!f64 {
         try self.need(8);
-        const bits = std.mem.bytesToValue(u64, self.buf[self.pos..][0..8]);
+        const bits = std.mem.readInt(u64, self.buf[self.pos..][0..8], .little);
         self.pos += 8;
         return @bitCast(bits);
     }

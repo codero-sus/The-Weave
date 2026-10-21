@@ -21,6 +21,17 @@ weave build examples/todo.weave --format exe -o dist/todoapp   # the long form
 `-o`, the output is the input's name with the format's extension — `.exe` on Windows,
 nothing extra elsewhere.
 
+### What travels, and what does not
+
+| Artifact | Portable? | Detail |
+| -------- | --------- | ------ |
+| `.wvbc` | **yes, one file for every platform** | fixed-width little-endian, no struct images, version-gated. Verified: a Debug glibc build and a ReleaseSafe static musl build emit identical bytes, and each runs the other's file. |
+| `.html` | **yes, one file for every platform** | the engine is `wasm32`, so the same bytes run in any browser on any OS. Verified: pages exported by two different builds are byte-identical. |
+| executable | **one file per platform** | it *is* a native binary, so it runs where the engine runs. Cross-compile to get the others — see below. |
+
+So two of the three formats are universal by construction; only the executable is tied to
+a target, and producing it for all six targets needs no toolchain on any of them.
+
 All three accept a `.wvbc` as input as well, so a pre-compiled app can be exported
 without re-parsing anything:
 
