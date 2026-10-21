@@ -148,10 +148,17 @@ offset  field
 …       body: app_name, render_fn, consts, funcs, signals, handlers, components, effects
 ```
 
-Integers use a varint-style encoding (`u32v`/`i32v`) so small values cost one byte.
+Integers are fixed width and **little-endian** (`u8`, `u32`, `i32`, `i64`; floats go out
+as their `u64` bit pattern), written with `std.mem.writeInt(…, .little)` rather than
+`std.mem.toBytes`, so an artifact does not inherit the byte order of the machine that
+compiled it. Nothing in the body is a raw struct image, so there is no padding or pointer
+size baked in either: a `.wvbc` written by a Debug glibc build and one written by a
+ReleaseSafe static musl build are byte-for-byte identical, and each loads in the other.
 `bytecode.encodeUnit` writes the body into a scratch buffer first (ids are assigned as
 it goes), then emits the header, string table and body. `bytecode.decode` rebuilds the
-whole unit in an arena, and `Loaded` owns both the arena and the file bytes.
+whole unit in an arena, and `Loaded` owns both the arena and the file bytes. The format
+version in the header is the compatibility gate — a decoder that meets a version it does
+not know refuses the file instead of guessing.
 
 A `.wvbc` file is a complete program: `weave run app.wvbc` serves it without a lexer,
 parser or compiler in the process. `weave dump` prints the disassembly of either form.

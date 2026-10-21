@@ -110,11 +110,16 @@ weave dump dist/todo.wvbc                # read the generated instructions
 
 `weave build` turns one `.weave` file into one artifact. Pick the artifact:
 
-| Format | Command | You get | Needs `weave` to run |
-| ------ | ------------------------------------------------------ | --------------------------------------------- | -------------------- |
-| `.wvbc` | `weave build app.weave` | pre-compiled bytecode, 1–3 KB | yes |
-| `.html` | `weave build app.weave --html dist/app.html` | one page, ~425 KB: WebAssembly engine, bytecode, styles and client inline | **no** — just a browser |
-| executable | `weave build app.weave --exe dist/app` | one file, ~6 MB: this engine with your app compiled into it | **no** |
+| Format | Command | You get | Needs `weave` to run | Runs on |
+| ------ | ------------------------------------------- | --------------------------------------------- | -------------- | ------------------- |
+| `.wvbc` | `weave build app.weave` | pre-compiled bytecode, 1–3 KB | yes | every platform |
+| `.html` | `weave build app.weave --html dist/app.html` | one page, ~425 KB: WebAssembly engine, bytecode, styles and client inline | **no** — just a browser | every platform |
+| executable | `weave build app.weave --exe dist/app` | one file, ~5 MB: this engine with your app compiled into it | **no** | one target per file |
+
+`.wvbc` and `.html` are portable by construction — same bytes, any machine, any browser.
+An executable is a native binary, so it runs where its engine runs; cross-compile `weave`
+once per target (`zig build -Dtarget=…`, no toolchain needed) and each of those binaries
+hands out executables for its own platform. See [`docs/exporting.md`](docs/exporting.md).
 
 ```sh
 weave build examples/todo.weave --html dist/todo.html   # then open dist/todo.html
