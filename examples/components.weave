@@ -1,0 +1,41 @@
+# Components: reusable view functions with parameters and defaults.
+# A component is called like any other element and owns its own subtree.
+
+component StatCard(label, value, tone = "neutral"):
+    card(shadow: sm, padding: 16, gap: 4):
+        text(label, font: 12, color: "#6b7280")
+        text("{value}", font: 24, bold: true)
+        badge(tone)
+
+component Counter(display, on_click):
+    row(gap: 8, align: center):
+        text(display, font: 18)
+        button("click", click: on_click())
+
+app Components:
+    state:
+        clicks = 0
+        users = 128
+        errors = 3
+
+    handlers:
+        register_click():
+            clicks += 1
+
+    view:
+        stack(padding: 24, gap: 16):
+            heading("Components", font: 28, bold: true)
+
+            row(gap: 12):
+                StatCard("clicks", clicks, "accent")
+                StatCard("users", users)
+                StatCard("errors", errors, "danger")
+
+            Counter(display: "clicks: {clicks}", on_click: register_click)
+
+            divider()
+
+            for i, name in ["alpha", "beta", "gamma"]:
+                row(gap: 8):
+                    badge("#{i}")
+                    text(name)

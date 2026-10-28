@@ -1,0 +1,282 @@
+/* Weave runtime stylesheet.
+ *
+ * The server sends layout intent (stack/row/card/text/...) plus a handful of
+ * style props; client.js maps them onto these classes and inline styles.
+ * Everything here is deliberately small and dependency-free.
+ */
+
+:root {
+  --wv-bg: #f7f7f9;
+  --wv-surface: #ffffff;
+  --wv-text: #14161a;
+  --wv-muted: #61677a;
+  --wv-border: #e4e5eb;
+  --wv-accent: #4f46e5;
+  --wv-accent-soft: #eef0ff;
+  --wv-danger: #dc2626;
+  --wv-radius: 12px;
+  --wv-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --wv-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --wv-bg: #101116;
+    --wv-surface: #181a21;
+    --wv-text: #eceef4;
+    --wv-muted: #9aa0b2;
+    --wv-border: #2a2d38;
+    --wv-accent: #8b8cff;
+    --wv-accent-soft: #22233a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  background: var(--wv-bg);
+  color: var(--wv-text);
+  font-family: var(--wv-font);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.weave-root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ------------------------------------------------------------- layout --- */
+
+.weave-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.weave-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.weave-box {
+  display: flex;
+  flex-direction: column;
+}
+
+.weave-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.weave-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+.weave-spacer {
+  flex: 1 1 auto;
+  min-height: 8px;
+}
+
+.weave-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--wv-surface);
+  border: 1px solid var(--wv-border);
+  border-radius: var(--wv-radius);
+  padding: 16px;
+}
+
+.weave-divider {
+  border: 0;
+  border-top: 1px solid var(--wv-border);
+  margin: 4px 0;
+  width: 100%;
+}
+
+/* ---------------------------------------------------------------- text --- */
+
+.weave-text {
+  margin: 0;
+}
+
+.weave-heading {
+  margin: 0;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  font-size: 22px;
+}
+
+.weave-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 9999px;
+  background: var(--wv-accent-soft);
+  color: var(--wv-accent);
+  font-size: 12px;
+  font-weight: 600;
+  width: fit-content;
+}
+
+.weave-code {
+  font-family: var(--wv-mono);
+  font-size: 13px;
+  background: var(--wv-surface);
+  border: 1px solid var(--wv-border);
+  border-radius: 8px;
+  padding: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.weave-link {
+  color: var(--wv-accent);
+  text-decoration: none;
+}
+
+.weave-link:hover {
+  text-decoration: underline;
+}
+
+/* -------------------------------------------------------------- inputs --- */
+
+.weave-input,
+.weave-textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--wv-surface);
+  border: 1px solid var(--wv-border);
+  border-radius: 10px;
+  padding: 9px 12px;
+  outline: none;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  width: 100%;
+}
+
+.weave-input:focus,
+.weave-textarea:focus {
+  border-color: var(--wv-accent);
+  box-shadow: 0 0 0 3px var(--wv-accent-soft);
+}
+
+.weave-input::placeholder,
+.weave-textarea::placeholder {
+  color: var(--wv-muted);
+}
+
+.weave-textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.weave-checkbox {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--wv-accent);
+  cursor: pointer;
+}
+
+.weave-button {
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--wv-accent);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 9px 16px;
+  cursor: pointer;
+  transition: filter 0.12s ease, transform 0.06s ease;
+  width: fit-content;
+}
+
+.weave-button:hover {
+  filter: brightness(1.07);
+}
+
+.weave-button:active {
+  transform: translateY(1px);
+}
+
+.weave-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.weave-image {
+  max-width: 100%;
+  border-radius: 10px;
+  display: block;
+}
+
+.weave-interactive {
+  cursor: pointer;
+}
+
+/* ----------------------------------------------------------- chrome ui --- */
+
+.weave-status {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 9999;
+  font-size: 12px;
+  font-family: var(--wv-mono);
+  padding: 6px 10px;
+  border-radius: 9999px;
+  background: var(--wv-surface);
+  border: 1px solid var(--wv-border);
+  color: var(--wv-muted);
+  box-shadow: 0 4px 14px rgba(16, 24, 40, 0.12);
+}
+
+.weave-status.pending {
+  color: var(--wv-accent);
+}
+
+.weave-status.down {
+  color: var(--wv-danger);
+}
+
+.weave-error {
+  position: fixed;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  z-index: 10000;
+  max-height: 40vh;
+  overflow: auto;
+  font-family: var(--wv-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #2b1214;
+  color: #ffd7d7;
+  border: 1px solid #7f1d1d;
+  box-shadow: 0 10px 30px rgba(16, 24, 40, 0.35);
+}
